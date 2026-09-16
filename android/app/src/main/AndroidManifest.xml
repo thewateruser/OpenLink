@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Networking -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- Per-app usage tracking. Access is actually granted via the special
+         Settings.ACTION_USAGE_ACCESS_SETTINGS screen (AppOps), not a runtime dialog -- see
+         ui/permissions/PermissionsScreen.kt. -->
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
+
+    <!-- Fallback full-screen block overlay when the accessibility service is unavailable; see
+         the design-note comment in enforcement/PolicyForegroundAccessibilityService.kt. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+    <!-- Foreground monitor service -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Restart enforcement after a reboot -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- List every installed app (not just ones that declare intents targeting this app) so the
+         home screen and server-side catalog (POST /device/apps) are complete. This is the kind
+         of broad package-visibility exemption Play Store reserves for parental-control apps;
+         a store listing would need to justify it in the Play Console. -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
+
+    <application
+        android:name=".OpenLinkApplication"
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="@string/app_name"
+        android:theme="@style/Theme.OpenLink"
+        android:usesCleartextTraffic="true"
+        tools:targetApi="34">
+        <!-- usesCleartextTraffic=true: this is a self-hosted app; many households will run the
+             server over plain HTTP on a LAN before/without setting up TLS. A production
+             deployment should terminate TLS at the server or a reverse proxy and this flag
+             (plus a network security config restricting cleartext to trusted hosts) should be
+             tightened accordingly. -->
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:theme="@style/Theme.OpenLink">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Foreground service: polls UsageStatsManager, tallies usage into Room, pushes
+             heartbeats, and maintains the Socket.IO connection (falling back to polling). -->
+        <service
+            android:name=".service.MonitorForegroundService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Parental screen-time enforcement and remote lock" />
+        </service>
+
+        <receiver
+            android:name=".service.BootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Lets a parent trigger DevicePolicyManager.lockNow() remotely, and lets us treat its
+             removal as a "self-unpair" signal (see admin/ChildDeviceAdminReceiver.kt). -->
+        <receiver
+            android:name=".admin.ChildDeviceAdminReceiver"
+            android:exported="true"
+            android:permission="android.permission.BIND_DEVICE_ADMIN">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin_policies" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Detects foreground-app changes and draws the full-screen block overlay. See the
+             design-note comment at the top of PolicyForegroundAccessibilityService.kt for why
+             this is the chosen enforcement mechanism over a plain Service+WindowManager. -->
+        <service
+            android:name=".enforcement.PolicyForegroundAccessibilityService"
+            android:exported="true"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
+
+    </application>
+
+</manifest>

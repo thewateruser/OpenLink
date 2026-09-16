@@ -1,0 +1,9 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- All real UI is Jetpack Compose / Material 3 (see ui/theme/Theme.kt); this platform
+         theme is only used for the window background/status bar before Compose takes over, and
+         for the manifest's mandatory android:theme attribute. -->
+    <style name="Theme.OpenLink" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">@android:color/white</item>
+        <item name="android:windowLightStatusBar" tools:targetApi="23">true</item>
+    </style>
+</resources>

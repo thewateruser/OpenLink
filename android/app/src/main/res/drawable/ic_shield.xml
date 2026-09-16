@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Flat, single-color glyph used as the foreground-service status notification's small icon
+     (notification small icons must be simple alpha-masked shapes). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M12,2L4,5v6c0,5.25 3.5,9.74 8,11 4.5,-1.26 8,-5.75 8,-11V5z" />
+</vector>

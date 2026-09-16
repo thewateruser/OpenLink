@@ -2,14 +2,13 @@
 //  RequestsListView.swift
 //  OpenLink (parent app)
 //
-//  Lists pending TimeRequests across all devices (GET /requests?status=pending)
-//  with approve/deny actions, plus recently-resolved requests.
+//  Pending time requests across every paired device, with approve/deny, plus
+//  recently-resolved ones.
 //
-//  Assumption: docs/API.md only shows `?status=pending` as an example, but
-//  TimeRequest.status is documented as `pending|approved|denied`, so
-//  "recently resolved" is built by also querying `status=approved` and
-//  `status=denied` on the same endpoint and merging the results client-side
-//  (see ios/README.md "Assumptions").
+//  Each device is queried independently (GET /requests on that device), so a
+//  device that's unreachable simply contributes nothing rather than failing
+//  the whole screen. Requests carry no deviceId in the protocol — the owning
+//  device is the DeviceSession that fetched them.
 //
 
 import SwiftUI
@@ -17,20 +16,24 @@ import SwiftUI
 struct RequestsListView: View {
     @EnvironmentObject private var appState: AppState
 
-    @State private var pending: [TimeRequest] = []
-    @State private var resolved: [TimeRequest] = []
-    @State private var isLoading = false
-    @State private var errorMessage: String?
     @State private var activeSheet: ActiveSheet?
+    @State private var errorMessage: String?
+
+    /// A request plus the device it belongs to.
+    private struct Item: Identifiable {
+        let session: DeviceSession
+        let request: TimeRequest
+        var id: String { "\(session.deviceId)/\(request.id)" }
+    }
 
     private enum ActiveSheet: Identifiable {
-        case approve(TimeRequest)
-        case deny(TimeRequest)
+        case approve(deviceId: String, request: TimeRequest)
+        case deny(deviceId: String, request: TimeRequest)
 
         var id: String {
             switch self {
-            case .approve(let request): return "approve-\(request.id)"
-            case .deny(let request): return "deny-\(request.id)"
+            case .approve(let deviceId, let request): return "approve-\(deviceId)-\(request.id)"
+            case .deny(let deviceId, let request): return "deny-\(deviceId)-\(request.id)"
             }
         }
     }
@@ -51,8 +54,8 @@ struct RequestsListView: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
-                ForEach(pending) { request in
-                    requestRow(request, isResolved: false)
+                ForEach(pending) { item in
+                    requestRow(item, isResolved: false)
                 }
             }
 
@@ -62,67 +65,111 @@ struct RequestsListView: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
-                ForEach(resolved) { request in
-                    requestRow(request, isResolved: true)
+                ForEach(resolved) { item in
+                    requestRow(item, isResolved: true)
+                }
+            }
+
+            if unreachableDevices.isEmpty == false {
+                Section {
+                    Text("Can't reach: \(unreachableDevices.joined(separator: ", ")). Requests from those devices will appear once they're connectable — they queue safely on the device itself.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
             }
         }
         .navigationTitle("Time Requests")
         .refreshable { await refresh() }
-        .task {
-            appState.socketManager.onNewRequest = { request in
-                if !pending.contains(where: { $0.id == request.id }) {
-                    pending.insert(request, at: 0)
-                }
-            }
-            await refresh()
-            await pollLoop()
-        }
+        .task { await refresh() }
         .sheet(item: $activeSheet) { sheet in
             NavigationStack {
                 switch sheet {
-                case .approve(let request):
+                case .approve(let deviceId, let request):
                     ApproveRequestView(request: request) { minutes in
-                        await approve(request, grantedMinutes: minutes)
+                        await respond(deviceId: deviceId) { session in
+                            try await session.approve(requestId: request.id, grantedMinutes: minutes)
+                        }
                     }
-                case .deny(let request):
+                case .deny(let deviceId, let request):
                     DenyRequestView(request: request) { reason in
-                        await deny(request, reason: reason)
+                        await respond(deviceId: deviceId) { session in
+                            try await session.deny(requestId: request.id, reason: reason)
+                        }
                     }
                 }
             }
         }
     }
 
+    // MARK: - Data
+
+    private var pending: [Item] {
+        appState.registry.sessions
+            .flatMap { session in session.pendingRequests.map { Item(session: session, request: $0) } }
+            .sorted { $0.request.createdAt > $1.request.createdAt }
+    }
+
+    private var resolved: [Item] {
+        appState.registry.sessions
+            .flatMap { session in session.resolvedRequests.map { Item(session: session, request: $0) } }
+            .sorted {
+                ($0.request.respondedAt ?? $0.request.createdAt) > ($1.request.respondedAt ?? $1.request.createdAt)
+            }
+            .prefix(30)
+            .map { $0 }
+    }
+
+    private var unreachableDevices: [String] {
+        appState.registry.sessions
+            .filter { !$0.connectionState.isConnected }
+            .map(\.device.deviceName)
+    }
+
+    // MARK: - Rows
+
     @ViewBuilder
-    private func requestRow(_ request: TimeRequest, isResolved: Bool) -> some View {
+    private func requestRow(_ item: Item, isResolved: Bool) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(deviceName(for: request.deviceId))
+                Text(item.session.device.deviceName)
                     .font(.headline)
                 Spacer()
-                statusBadge(request)
+                statusBadge(item.request)
             }
-            Text(request.packageName)
-                .font(.caption)
+            Text(item.request.displayName)
+                .font(.subheadline)
+            if item.request.displayName != item.request.packageName {
+                Text(item.request.packageName)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            let messageSuffix = item.request.message.map { " — “\($0)”" } ?? ""
+            Text("Asked for \(item.request.minutesRequested) more min\(messageSuffix)")
+                .font(.subheadline)
                 .foregroundStyle(.secondary)
 
-            let messageSuffix = request.message.map { " — \($0)" } ?? ""
-            Text("Requested \(request.minutesRequested) min\(messageSuffix)")
-                .font(.subheadline)
-
-            if let grantedMinutes = request.grantedMinutes {
+            if let grantedMinutes = item.request.grantedMinutes {
                 Text("Granted \(grantedMinutes) min")
                     .font(.caption)
                     .foregroundStyle(.green)
             }
+            if let note = item.request.responseNote {
+                Text("Note: \(note)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
 
             if !isResolved {
                 HStack {
-                    Button("Approve") { activeSheet = .approve(request) }
-                        .buttonStyle(.borderedProminent)
-                    Button("Deny", role: .destructive) { activeSheet = .deny(request) }
-                        .buttonStyle(.bordered)
+                    Button("Approve") {
+                        activeSheet = .approve(deviceId: item.session.deviceId, request: item.request)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    Button("Deny", role: .destructive) {
+                        activeSheet = .deny(deviceId: item.session.deviceId, request: item.request)
+                    }
+                    .buttonStyle(.bordered)
                 }
                 .padding(.top, 4)
             }
@@ -149,64 +196,20 @@ struct RequestsListView: View {
         }
     }
 
-    private func deviceName(for deviceId: String) -> String {
-        appState.deviceNames[deviceId] ?? "Device \(deviceId.prefix(6))"
-    }
+    // MARK: - Actions
 
-    private func approve(_ request: TimeRequest, grantedMinutes: Int) async {
+    private func respond(deviceId: String, _ action: (DeviceSession) async throws -> Void) async {
+        guard let session = appState.registry.session(for: deviceId) else { return }
         do {
-            _ = try await appState.apiClient.approveRequest(id: request.id, grantedMinutes: grantedMinutes)
-            await refresh()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    private func deny(_ request: TimeRequest, reason: String?) async {
-        do {
-            _ = try await appState.apiClient.denyRequest(id: request.id, reason: reason)
-            await refresh()
+            try await action(session)
+            errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
     private func refresh() async {
-        isLoading = true
-        errorMessage = nil
-        defer { isLoading = false }
-        do {
-            async let devicesTask = appState.apiClient.fetchDevices()
-            async let pendingTask = appState.apiClient.fetchRequests(status: "pending")
-            async let approvedTask = appState.apiClient.fetchRequests(status: "approved")
-            async let deniedTask = appState.apiClient.fetchRequests(status: "denied")
-
-            let (devices, pendingResult, approvedResult, deniedResult) = try await (
-                devicesTask, pendingTask, approvedTask, deniedTask
-            )
-
-            for device in devices {
-                appState.deviceNames[device.id] = device.name
-            }
-
-            pending = pendingResult.sorted { $0.createdAt > $1.createdAt }
-            let combinedResolved = (approvedResult + deniedResult)
-                .sorted { ($0.respondedAt ?? $0.createdAt) > ($1.respondedAt ?? $1.createdAt) }
-            resolved = Array(combinedResolved.prefix(20))
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    /// Foreground fallback poll every ~30s while the socket isn't connected.
-    private func pollLoop() async {
-        while !Task.isCancelled {
-            try? await Task.sleep(for: .seconds(30))
-            if Task.isCancelled { break }
-            if !appState.socketManager.isConnected {
-                await refresh()
-            }
-        }
+        await appState.registry.refreshAllOnForeground()
     }
 }
 
@@ -227,19 +230,23 @@ private struct ApproveRequestView: View {
     var body: some View {
         Form {
             Section("Request") {
-                Text(request.packageName)
+                Text(request.displayName)
                 if let message = request.message {
                     Text(message).font(.footnote).foregroundStyle(.secondary)
                 }
-                Text("Requested \(request.minutesRequested) min")
+                Text("Asked for \(request.minutesRequested) min")
             }
             Section("Grant") {
                 Stepper(value: $minutes, in: 1...600, step: 5) {
                     Text("\(Int(minutes)) minutes")
                 }
+                Text("Takes effect on the child device immediately.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .navigationTitle("Approve Request")
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel") { dismiss() }
@@ -270,14 +277,15 @@ private struct DenyRequestView: View {
     var body: some View {
         Form {
             Section("Request") {
-                Text(request.packageName)
-                Text("Requested \(request.minutesRequested) min")
+                Text(request.displayName)
+                Text("Asked for \(request.minutesRequested) min")
             }
             Section("Reason (optional)") {
                 TextField("Let them know why", text: $reason, axis: .vertical)
             }
         }
         .navigationTitle("Deny Request")
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel") { dismiss() }
@@ -295,11 +303,4 @@ private struct DenyRequestView: View {
         }
         .disabled(isSubmitting)
     }
-}
-
-#Preview {
-    NavigationStack {
-        RequestsListView()
-    }
-    .environmentObject(AppState())
 }

@@ -1,30 +1,42 @@
 # OpenLink — iOS Parent App
 
 SwiftUI "parent/controller" app for OpenLink, a FOSS Family Link alternative.
-This app manages Android "child" devices via a self-hosted OpenLink server
-(`server/`, built separately). See `docs/API.md` at the repo root for the
-full REST + Socket.IO contract this app implements.
+
+**There is no server.** The Android child device *is* the server: it hosts a
+TLS HTTP + WebSocket listener, and this app connects to it directly — over
+your Wi-Fi at home, or over an overlay network (Tailscale/WireGuard) when
+you're away. There are no accounts and no JWTs; trust is established once per
+device by scanning a QR code off that device's screen, which carries its TLS
+certificate fingerprint. This app pins that fingerprint forever after.
+
+See **`docs/PROTOCOL.md`** at the repo root for the authoritative contract
+this app implements: the pairing handshake, the REST routes the child serves,
+the WebSocket events, and endpoint learning.
 
 ## Honest status
 
-**Nothing in this directory has been compiled or run.** This container has
-no macOS/Xcode/Swift toolchain, so there was no way to build, typecheck or
-launch the app while writing it. Treat this as a careful, complete first
-implementation attempt — written to be idiomatic, internally consistent and
-(as far as manual review can tell) syntactically/semantically correct Swift
-— not as verified-working code. Before relying on it:
+**Nothing in this directory has been compiled or run.** This container has no
+macOS/Xcode/Swift toolchain, so there was no way to build, typecheck or launch
+the app while writing it. Treat it as a careful, complete implementation
+attempt — written to be idiomatic and internally consistent, and manually
+cross-checked for type/method agreement — not as verified-working code.
+Before relying on it:
 
 - Run `xcodegen generate`, open the project in Xcode, and fix whatever the
-  compiler flags (package resolution issues, minor API mismatches with the
-  pinned `socket.io-client-swift` version, etc.).
-- Point it at a real running `server/` instance and click through
-  register → pair → dashboard → policies → schedule → requests once by hand.
+  compiler flags. There are no third-party packages to resolve any more, so
+  anything that breaks is in this source tree.
+- Pair against a real child device and click through: scan → pair → device
+  detail → policy → schedule → requests → lock, once at home on Wi-Fi and
+  once away from home over the overlay network.
+- Deliberately test the **failure** path for pinning: point the app at a
+  device presenting a different certificate and confirm it refuses to
+  connect rather than falling back to anything.
 
 ## Prerequisites
 
 - macOS with Xcode 15 or newer (iOS 16 SDK)
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen): `brew install xcodegen`
-- A running OpenLink server (see `server/`) reachable from your device/simulator
+- A child Android device running the OpenLink child app, on the same Wi-Fi
 
 ## Generate and build
 
@@ -34,140 +46,169 @@ xcodegen generate
 open OpenLink.xcodeproj
 ```
 
-Then build/run the `OpenLink` scheme in Xcode (⌘R). On first build, Xcode
-will resolve the Swift Package dependency on
-[`socket.io-client-swift`](https://github.com/socketio/socket.io-client-swift)
-(pinned to `from: 16.1.0` in `project.yml`, targeting the modern Socket.IO
-v4 protocol).
-
-You'll also need to set a Development Team under the target's Signing &
-Capabilities tab (or via `DEVELOPMENT_TEAM` in `project.yml`) to run on a
-physical device.
-
-## Pointing at your self-hosted server
-
-This is not a hosted SaaS product — there is no built-in server address.
-On first launch, the login/register screen has a "Self-Hosted Server" field;
-enter your server's base URL, e.g. `https://openlink.mydomain.com` or
-`http://192.168.1.50:3000` for a LAN deployment. It's saved (non-sensitively,
-in `UserDefaults`) and can be changed later from the Settings tab. The JWT
-session token itself is stored in the iOS **Keychain**, never `UserDefaults`.
-
-Because a self-hosted server may not have a trusted TLS certificate (e.g. a
-LAN box using `http://` or a self-signed cert), `Info.plist` sets
-`NSAppTransportSecurity.NSAllowsArbitraryLoads = true`. Tighten this if your
-deployment always terminates TLS with a valid certificate.
+Build/run the `OpenLink` scheme (⌘R). **No package resolution happens** —
+the app has zero third-party dependencies. You'll need a Development Team set
+under Signing & Capabilities (or `DEVELOPMENT_TEAM` in `project.yml`) to run
+on a physical device, which you will need: the simulator has no camera, so
+pairing can't be exercised there.
 
 ## Project layout
 
 ```
 ios/
-  project.yml                     XcodeGen project spec (SPM deps, target, Info.plist, entitlements)
+  project.yml                     XcodeGen project spec (target, Info.plist)
   README.md                       this file
   OpenLink/
     Assets.xcassets/              AppIcon (placeholder, no image yet) + AccentColor
     Sources/
-      App/                        entry point, AppState, root/tab navigation, AppDelegate (APNs callbacks)
-      Networking/                 APIClient (URLSession + async/await), SocketManager, Models (Codable DTOs)
-      Auth/                       login/register, Keychain-backed session storage, Settings (server URL, logout)
-      Pairing/                    pairing code screen + CoreImage QR generation
-      Devices/                    dashboard, device detail, policy editor, schedule/downtime editor
+      App/                        entry point, AppState, DeviceRegistry, root/tab navigation
+      Model/                      protocol DTOs, PairedDevice, DeviceEndpoint + ranking
+      Storage/                    Keychain credentials (per device), paired-device persistence
+      Networking/                 certificate pinning, pinned transport, DeviceConnection
+                                  (REST + endpoint racing), DeviceSession (per-device state),
+                                  EventSocket (URLSessionWebSocketTask), BonjourBrowser
+      Pairing/                    QR URI parsing, AVFoundation scanner, handshake, pairing UI
+      Devices/                    device list, device detail, policy editor, schedule editor,
+                                  manual endpoint entry
       Requests/                   time-request list + approve/deny sheets
-      Notifications/              APNs registration stub (see TODO below)
+      Notifications/              LOCAL notifications only (no APNs — see below)
+      Settings/                   status + explanation screen
 ```
 
-`OpenLink.xcodeproj`, `OpenLink/Info.plist` and `OpenLink/OpenLink.entitlements`
-are all **generated by `xcodegen generate`** from `project.yml` — they are
-not checked in, so don't hand-edit them; edit `project.yml` instead.
+`OpenLink.xcodeproj` and `OpenLink/Info.plist` are **generated by
+`xcodegen generate`** from `project.yml` — not checked in, don't hand-edit.
+There is no entitlements file any more.
 
 ## What's implemented
 
-1. **Auth** — register/login against `POST /auth/register` /
-   `POST /auth/login`, JWT stored in the Keychain via `Auth/KeychainStore.swift`.
-2. **Pairing** — `POST /pairing/generate`, showing the code large, a QR code
-   (Apple's `CIFilter.qrCodeGenerator()`, no third-party dependency), and a
-   live `expiresAt` countdown.
-3. **Dashboard** — `GET /devices` list with name, last-seen (relative time),
-   lock status and a lock/unlock toggle (`POST /devices/:deviceId/lock`).
-4. **Device detail** — `GET /devices/:deviceId`; apps merged from `policies`
-   + today's `usage`; tapping an app opens a policy editor
-   (`PUT /devices/:deviceId/policies/:packageName`) to set/clear
-   `dailyLimitMinutes` and toggle `blocked`. A schedule editor
-   (`PUT /devices/:deviceId/schedule`) adds/removes `ScheduleWindow`s with
-   day-of-week toggles and time pickers.
-5. **Time requests** — `GET /requests?status=pending` with approve
-   (`POST /requests/:id/approve`) and deny (`POST /requests/:id/deny`)
-   actions, plus a recently-resolved section.
-6. **Realtime** — `Networking/SocketManager.swift` connects to `/socket.io`
-   with the JWT in the handshake `auth` payload, live-updating the dashboard
-   (`device:heartbeat`) and requests list (`request:new`); falls back to a
-   ~30s foreground poll whenever the socket isn't connected.
-7. **Push notifications** — permission request + APNs registration are
-   wired up in `Notifications/PushNotificationManager.swift` and
-   `App/AppDelegate.swift`, but the resulting device token is only logged,
-   never sent anywhere — see the `TODO(push)` comment there for why
-   (requires an Apple Developer account/APNs credentials and a server
-   endpoint that doesn't exist in `docs/API.md` yet).
+1. **QR pairing** (`Pairing/`) — AVFoundation camera scanner reads
+   `openlink://pair?v=1&id=…&name=…&fp=…&psk=…&ep=…`, then runs the handshake
+   from PROTOCOL.md: dial an endpoint with the QR's fingerprint pinned,
+   generate a random 32-byte `parentId`, compute
+   `HMAC-SHA256(psk, "openlink-pair-v1" || parentId)` with CryptoKit,
+   `POST /pair`, and store `parentToken` + the pinned fingerprint in the
+   Keychain keyed by `deviceId`. Requires `NSCameraUsageDescription`, declared
+   in `project.yml`.
+2. **Certificate pinning** (`Networking/CertificatePinning.swift`) — a
+   `URLSessionDelegate` that compares SHA-256 of the leaf certificate's DER
+   against the pinned fingerprint in constant time and cancels the challenge
+   on any mismatch. Read the header comment in that file before touching it.
+3. **Multi-device** (`App/DeviceRegistry.swift`) — N paired devices, each with
+   its own token, pinned certificate, endpoint list and connection. Nothing
+   ties them together; removing one doesn't affect the others.
+4. **Endpoint racing + learning** (`Networking/DeviceConnection.swift`,
+   `Model/DeviceEndpoint.swift`) — endpoints are ranked by expected latency
+   (live Bonjour sighting → LAN/`.local` → IPv6 ULA → Tailscale CGNAT/`.ts.net`
+   → other) and dialed with a 0.6s stagger, first success wins. Every
+   `GET /device` and `device:state` merges the returned `endpoints` into the
+   stored list, which is how a device paired at home learns its Tailscale
+   address by itself.
+5. **Bonjour** (`Networking/BonjourBrowser.swift`) — `NWBrowser` for
+   `_openlink._tcp`, resolved to a concrete host:port, used both to speed up
+   connecting and to show "on this Wi-Fi".
+6. **WebSocket** (`Networking/EventSocket.swift`) — `URLSessionWebSocketTask`
+   against `/events` on the same pinned session with the bearer token in the
+   `Authorization` header, handling `request:new`, `usage:update`,
+   `lock:update`, `policy:update` and `device:state`, with backoff reconnect
+   and a 25s keepalive ping. REST polling every 30s whenever it isn't
+   connected — nothing depends on the socket being up.
+7. **Management UI** — devices list with lock toggles, device detail with
+   per-app limits (`PUT /policies/{packageName}`, with a real JSON `null` to
+   clear a limit), downtime schedule editor (`PUT /schedule`), and time
+   requests across all devices with approve/deny.
+8. **Manual endpoint entry** (`Devices/EndpointsView.swift`) — the escape
+   hatch for typing a Tailscale hostname directly.
 
-## Assumptions / deviations from `docs/API.md`
+## No push notifications
 
-`docs/API.md` is thorough but doesn't pin down every response/error shape.
-Where it was silent, this app makes the following explicit, documented
-assumptions (search for these strings in the Swift source for the exact
-reasoning in context):
+There is categorically no APNs path here (PROTOCOL.md, "Deliberate
+limitations"): waking a closed iOS app needs APNs, APNs needs a provider
+server with Apple-issued credentials, and shipping those credentials inside
+the child app would be a serious vulnerability. So:
 
-- **`GET /devices/:deviceId` schedule field** — the doc says this endpoint
-  returns "full device detail incl. policies + today's usage" but doesn't
-  explicitly list `schedule` as part of that payload. `ChildDeviceDetail`
-  decodes `schedule` leniently (defaults to `[]` if absent) so the app
-  doesn't crash either way; if the server omits it, the schedule editor
-  simply opens empty until the parent adds a window (a `PUT` always
-  replaces the whole list regardless).
-- **`PUT /devices/:deviceId/schedule` response body** — shape isn't
-  specified. `APIClient.updateSchedule` only checks for a 2xx status and
-  ignores the body; the schedule editor re-fetches the device afterwards to
-  pick up the server's saved state.
-- **`GET /requests` status filter values** — only `?status=pending` is shown
-  as an example. Since `TimeRequest.status` is documented as
-  `pending|approved|denied`, the "recently resolved" section on the Requests
-  screen also queries `?status=approved` and `?status=denied` and merges the
-  results client-side, sorted by `respondedAt`. If the server only accepts
-  `pending`, those two extra calls will need a small server-side tweak (or a
-  client-side change to fetch unfiltered and filter locally).
-- **`POST /devices/:deviceId/lock` response body** — described as "the
-  updated device" without an exact shape. `DeviceLockResult` only decodes
-  `id`/`isLocked`; the dashboard/detail screens re-fetch the full list/device
-  afterwards rather than trusting a partially-guessed shape.
-- **Server error body shape** — not documented. `APIClient` tries to decode
-  `{ "error": "..." }` or `{ "message": "..." }`, then falls back to the raw
-  response text, then to a generic HTTP status description.
-- **JSON `null` for clearing `dailyLimitMinutes`** — Swift's default
-  synthesized `Encodable` *omits* `nil` optional fields rather than sending
-  JSON `null`, which would make it impossible to distinguish "leave the
-  limit unchanged" from "clear it to unlimited". `PolicyUpdateRequest` in
-  `Networking/Models.swift` hand-writes `encode(to:)` with a 3-state
-  `LimitUpdate` enum (`.unchanged` / `.set(Int)` / `.clear`) to send an
-  explicit `null` only when the parent actually clears the limit.
-- **Socket.IO `auth` handshake option** — `docs/API.md` says to "pass the
-  same JWT ... as a `token` field in the Socket.IO `auth` payload on
-  connect." This uses `socket.io-client-swift`'s `.auth([String: Any])`
-  connection config (available in the 16.x line pinned in `project.yml`,
-  which targets the Socket.IO v4 protocol). If a different client version
-  ends up pinned and lacks `.auth`, the code comment in
-  `Networking/SocketManager.swift` notes `.connectParams(["token": token])`
-  as the fallback.
-- **Family/parent room join** — per the doc, room membership is derived
-  server-side from the authenticated token, so the client only needs to
-  connect with the JWT; there's no explicit "join family room" emit.
-- **ISO-8601 timestamp format** — the doc says timestamps are "ISO-8601 UTC
-  strings" but not whether fractional seconds are included. `JSONCoding` in
-  `Networking/Models.swift` tries `withFractionalSeconds` first, then plain
-  `withInternetDateTime`, and always encodes with fractional seconds on
-  outgoing requests (a common superset most servers parse fine).
+- **App closed** — no notification is possible; pending requests are seen on
+  next open.
+- **Backgrounded with the socket still alive** — `request:new` raises a
+  **local** notification (`Notifications/LocalNotificationManager.swift`).
+- **Foreground** — the UI updates in place.
+
+The `aps-environment` entitlement and the `remote-notification` background
+mode have been removed from `project.yml` accordingly.
+
+## Assumptions / divergences from `docs/PROTOCOL.md`
+
+PROTOCOL.md is precise about the security-critical parts and looser about a
+few shapes. Where it was silent, this app makes the following explicit,
+commented assumptions — grep the source for the reasoning in context.
+
+- **`parentId` inside the HMAC message.** PROTOCOL.md writes the proof as
+  `HMAC-SHA256(key = psk, msg = "openlink-pair-v1" || parentId)` without
+  saying whether `parentId` contributes its 32 raw bytes or the UTF-8 of its
+  base64url text. `PairingService.proof` uses the **UTF-8 bytes of the
+  base64url string**, because that is literally the value carried in the JSON
+  body and therefore the only form the child is guaranteed to have when it
+  recomputes the HMAC. This has been checked against the Android side
+  (`android/.../pairing/PairingSession.kt`), which resolves it the same way.
+  The `psk` is unambiguous and is used as 32 raw decoded bytes for the key.
+- **Pairing is attempted sequentially, not raced.** Ordinary connections race
+  endpoints, but `psk` is single-use and `POST /pair` is rate-limited to 5
+  attempts/minute, so firing parallel attempts would burn the budget and could
+  race the child into invalidating the `psk` mid-flight.
+- **Bonjour TXT record contents are unspecified in PROTOCOL.md.**
+  `BonjourBrowser` reads the child's `deviceId` from the TXT key `id`, which
+  matches what `android/.../server/NsdAdvertiser.kt` publishes (`v`, `id`,
+  `fp`). The advertised `fp` is deliberately ignored: the pin comes from the
+  QR code, and a fingerprint anyone on the network can advertise is not a
+  trust anchor. A sighting with no `id` is never matched to a paired device
+  (everything still works, just without the Wi-Fi fast path). **This belongs
+  in PROTOCOL.md** — two implementations currently agree by inspection rather
+  than by specification.
+- **The nested `policy` object in `GET /apps` isn't defined.** It's assumed to
+  mirror the `PUT /policies/{packageName}` body (`dailyLimitMinutes`,
+  `blocked`) and is decoded leniently, as is `policy:update`'s `policies`
+  field (accepted either as an object keyed by package name or as an array of
+  `{ packageName, … }`).
+- **`batteryLevel` has no stated units.** Displayed as a percentage.
+- **`usage:update` carries the child's local date.** Since it's a ~1/min live
+  tick it always means the child's "today" — the same thing
+  `AppEntry.todayMinutes` means — so it's applied regardless of what date this
+  phone thinks it is.
+- **No error-envelope shape is documented.** `DeviceConnection` tries
+  `{ "error": … }` then `{ "message": … }`, then raw text, then the HTTP
+  status description. `401`/`403` are mapped to a "this device rejected our
+  token, re-pair it" message.
+- **ISO-8601 fractional seconds aren't specified.** `JSONCoding` accepts both
+  and always emits fractional seconds.
+- **JSON `null` for clearing `dailyLimitMinutes`.** Swift's synthesized
+  `Encodable` omits `nil` rather than emitting `null`, which would conflate
+  "leave unchanged" with "clear to unlimited". `PolicyUpdateRequest`
+  hand-writes `encode(to:)` with a three-state `LimitUpdate` enum.
+- **App Transport Security.** The child serves a self-signed certificate on a
+  raw IP, so ATS can never validate it and exceptions can't be scoped to a
+  domain — `NSAllowsArbitraryLoads` is set. This is not a weakening in
+  practice: pinning one exact certificate learned out-of-band is strictly
+  stronger than the system trust evaluation it replaces. It does mean a future
+  contributor must not add an unpinned `URLSession` to this app.
 - **AppIcon** — `Assets.xcassets/AppIcon.appiconset` has a valid
-  single-size (1024×1024 "universal") `Contents.json` but no actual image
-  file; add a real icon before shipping.
-- **APNs entitlement** — `project.yml` requests
-  `aps-environment: development` so the target builds with the Push
-  Notifications capability, but see the push notifications TODO above —
-  it's unused without real APNs credentials and a server endpoint.
+  single-size `Contents.json` but no actual image; add one before shipping.
+
+## Security notes on the pinning implementation
+
+- The pin is on the **leaf certificate**, not its public key. That is what
+  PROTOCOL.md specifies, and it means certificate rotation on the child
+  (reinstall, Keystore wipe) requires re-pairing. That's the safe failure
+  mode — a changed fingerprint means "stop", never "trust it anyway".
+- System trust evaluation is **not** performed, and neither is hostname
+  verification. Both are meaningless against a self-signed certificate on a
+  raw IP; the fingerprint from the QR is the whole authentication.
+- Expiry is therefore **not** checked either. A long-lived self-signed
+  certificate is the intended design; if the child ever starts issuing
+  short-lived certificates, this app will need a rotation story.
+- Credentials are stored `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`,
+  so they are not carried into a backup and restored onto another phone. A
+  restored phone shows the device under "Needs Re-Pairing" instead.
+- The pinned fingerprint lives in the Keychain next to the token, not in
+  `UserDefaults`. It isn't secret, but it is the trust anchor, and it must not
+  be silently rewritable.
+- `DeviceConnection` refuses to construct at all if the stored fingerprint is
+  malformed. There is no code path anywhere that falls back to unpinned TLS.

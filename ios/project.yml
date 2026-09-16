@@ -10,10 +10,10 @@ configs:
   Debug: debug
   Release: release
 
-packages:
-  SocketIO:
-    url: https://github.com/socketio/socket.io-client-swift
-    from: 16.1.0
+# No packages. The app has zero third-party dependencies: the old
+# socket.io-client-swift dependency was removed along with the server —
+# the child device speaks a plain WebSocket, which URLSessionWebSocketTask
+# handles natively.
 
 targets:
   OpenLink:
@@ -24,13 +24,10 @@ targets:
       - path: OpenLink/Sources
     resources:
       - path: OpenLink/Assets.xcassets
-    dependencies:
-      - package: SocketIO
-        product: SocketIO
-    entitlements:
-      path: OpenLink/OpenLink.entitlements
-      properties:
-        aps-environment: development
+    # No entitlements file: the only entitlement this app used to need was
+    # aps-environment for APNs, and there is categorically no APNs path
+    # without a provider server (see docs/PROTOCOL.md, "Deliberate
+    # limitations"). Notifications are local-only.
     info:
       path: OpenLink/Info.plist
       properties:
@@ -39,26 +36,30 @@ targets:
         CFBundleVersion: "1"
         ITSAppUsesNonExemptEncryption: false
         UILaunchScreen: {}
-        UIRequiredDeviceCapabilities: [armv7]
+        UIRequiredDeviceCapabilities: [arm64]
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
-        UIBackgroundModes:
-          - remote-notification
-        # This app talks to a self-hosted server whose address the parent
-        # types in (see Auth/AuthView.swift + Auth/SettingsView.swift) — it
-        # may be on a home LAN without a trusted TLS certificate. Arbitrary
-        # loads are allowed so http:// / self-signed https:// self-hosted
-        # servers work out of the box; tighten this if your deployment
-        # always terminates TLS properly.
+        # Pairing is a camera QR scan (Pairing/QRScannerView.swift). This is
+        # the only use of the camera.
+        NSCameraUsageDescription: "OpenLink uses the camera to scan the pairing QR code shown on your child's device."
+        # NWBrowser for _openlink._tcp (Networking/BonjourBrowser.swift) needs
+        # both the usage string and an explicit service declaration on iOS 14+.
+        NSLocalNetworkUsageDescription: "OpenLink finds your child's device on your Wi-Fi so it can connect directly, without any server in between."
+        NSBonjourServices:
+          - _openlink._tcp
+        # The child device serves a self-signed certificate on a raw LAN or
+        # overlay-network IP address, so ATS can never validate it and
+        # exceptions can't be scoped to a domain. Security here comes from
+        # certificate pinning in Networking/CertificatePinning.swift, which
+        # pins the exact certificate learned out-of-band from the pairing QR
+        # — a strictly stronger check than the system trust evaluation this
+        # disables. NSAllowsLocalNetworking is declared too so the intent is
+        # visible even though arbitrary loads already covers it.
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
-        # Only relevant if a future revision resolves the server via
-        # Bonjour/mDNS on the home LAN instead of a typed-in URL; harmless
-        # to declare up front since self-hosting implies a LAN server is
-        # the common case.
-        NSLocalNetworkUsageDescription: "OpenLink may need to reach your self-hosted OpenLink server on your local network."
+          NSAllowsLocalNetworking: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: org.openlink.parent

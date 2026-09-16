@@ -2,8 +2,9 @@
 //  AppState.swift
 //  OpenLink (parent app)
 //
-//  App-wide environment object: session state, the shared APIClient and
-//  SocketManager, and the self-hosted server base URL setting.
+//  App-wide environment object. With no server there is no session, no JWT
+//  and no server-URL setting — this just owns the paired-device registry and
+//  the Bonjour browser, and wires the two together.
 //
 
 import Foundation
@@ -11,79 +12,54 @@ import Combine
 
 @MainActor
 final class AppState: ObservableObject {
-    @Published var isAuthenticated: Bool
-    @Published var serverBaseURL: String {
-        didSet {
-            UserDefaults.standard.set(serverBaseURL, forKey: Self.serverURLDefaultsKey)
-            apiClient.baseURLString = serverBaseURL
-        }
-    }
-    @Published var lastError: String?
+    let registry: DeviceRegistry
+    let bonjour: BonjourBrowser
 
-    /// Best-effort deviceId -> name cache, populated by the dashboard and
-    /// read by the Requests screen so it can show a device name instead of
-    /// a raw id without every screen re-fetching the device list.
-    @Published var deviceNames: [String: String] = [:]
-
-    let apiClient: APIClient
-    let socketManager: SocketManager
-
-    private static let serverURLDefaultsKey = "openlink.serverBaseURL"
-    private let keychain = KeychainStore()
     private var cancellables = Set<AnyCancellable>()
 
-    init() {
-        let storedURL = UserDefaults.standard.string(forKey: Self.serverURLDefaultsKey) ?? ""
-        let store = KeychainStore()
-        let token = store.readToken()
+    init(registry: DeviceRegistry = DeviceRegistry(), bonjour: BonjourBrowser = BonjourBrowser()) {
+        self.registry = registry
+        self.bonjour = bonjour
 
-        self.serverBaseURL = storedURL
-        self.apiClient = APIClient(baseURLString: storedURL, authToken: token)
-        self.socketManager = SocketManager()
-        self.isAuthenticated = token != nil
-
-        // SwiftUI views observe `appState` (an @EnvironmentObject), not the
-        // nested `socketManager` object directly. Forward its
-        // objectWillChange so that, e.g., a "Connected"/"Not connected"
-        // label bound to `appState.socketManager.isConnected` actually
-        // refreshes when that flips.
-        socketManager.objectWillChange
+        // Views observe `appState`; forward the nested objects' changes so a
+        // "on this Wi-Fi" badge or a connection dot actually refreshes.
+        registry.objectWillChange
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+        bonjour.objectWillChange
             .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &cancellables)
 
-        if let token, !storedURL.isEmpty {
-            socketManager.connect(serverBaseURLString: storedURL, token: token)
+        bonjour.onDiscovery = { [weak self] discovery in
+            guard let self else { return }
+            self.registry.applyDiscovery(discovery)
+            self.registry.updateLocalNetworkPresence(using: self.bonjour)
         }
     }
 
-    /// Call after a successful `/auth/register` or `/auth/login`.
-    func completeAuth(token: String) {
-        do {
-            try keychain.save(token: token)
-            apiClient.authToken = token
-            lastError = nil
-            isAuthenticated = true
-            if !serverBaseURL.isEmpty {
-                socketManager.connect(serverBaseURLString: serverBaseURL, token: token)
-            }
-        } catch {
-            lastError = "Signed in, but couldn't securely store the session: \(error.localizedDescription)"
+    /// Called on launch and whenever the app becomes active.
+    func startAll() {
+        bonjour.start()
+        registry.startAll()
+        registry.updateLocalNetworkPresence(using: bonjour)
+    }
+
+    func handleForeground() {
+        bonjour.start()
+        registry.startAll()
+        Task {
+            await LocalNotificationManager.shared.refreshAuthorizationStatus()
+            await registry.refreshAllOnForeground()
+            registry.updateLocalNetworkPresence(using: bonjour)
         }
     }
 
-    func logout() {
-        try? keychain.delete()
-        apiClient.authToken = nil
-        isAuthenticated = false
-        deviceNames = [:]
-        socketManager.disconnect()
-    }
-
-    /// Reconnects the socket if we have credentials but aren't connected —
-    /// used when the app returns to the foreground.
-    func reconnectSocketIfNeeded() {
-        guard isAuthenticated, !serverBaseURL.isEmpty, !socketManager.isConnected else { return }
-        guard let token = keychain.readToken() else { return }
-        socketManager.connect(serverBaseURLString: serverBaseURL, token: token)
+    /// The socket is left running when backgrounded on purpose: iOS keeps it
+    /// alive for a while, and that window is the only one in which a
+    /// `request:new` can raise a local notification (there is no APNs path —
+    /// see LocalNotificationManager). Only Bonjour, which is comparatively
+    /// expensive, is stopped.
+    func handleBackground() {
+        bonjour.stop()
     }
 }

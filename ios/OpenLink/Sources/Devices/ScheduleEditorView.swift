@@ -3,31 +3,37 @@
 //  OpenLink (parent app)
 //
 //  Add/remove ScheduleWindows (days-of-week + start/end time) and save via
-//  PUT /devices/:deviceId/schedule, which replaces the device's whole
-//  downtime schedule.
+//  PUT /schedule, which replaces the device's whole downtime schedule.
+//
+//  Times are minute-of-day in the CHILD DEVICE's local time, which is what
+//  enforcement uses. The pickers below therefore show wall-clock times that
+//  belong to that device, not to this phone.
 //
 
 import SwiftUI
 
 struct ScheduleEditorView: View {
-    let deviceId: String
-    var onSaved: () -> Void
+    @ObservedObject var session: DeviceSession
 
-    @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
 
     @State private var windows: [ScheduleWindow]
     @State private var isSaving = false
     @State private var errorMessage: String?
 
-    init(deviceId: String, initialWindows: [ScheduleWindow], onSaved: @escaping () -> Void) {
-        self.deviceId = deviceId
-        self.onSaved = onSaved
+    init(session: DeviceSession, initialWindows: [ScheduleWindow]) {
+        self.session = session
         _windows = State(initialValue: initialWindows)
     }
 
     var body: some View {
         Form {
+            Section {
+                Text("Times are in the child device's local time.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
             if windows.isEmpty {
                 Section {
                     Text("No downtime windows. Add one below to block apps during bedtime or study time.")
@@ -67,6 +73,7 @@ struct ScheduleEditorView: View {
             }
         }
         .navigationTitle("Downtime Schedule")
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel") { dismiss() }
@@ -156,8 +163,7 @@ struct ScheduleEditorView: View {
         errorMessage = nil
         defer { isSaving = false }
         do {
-            try await appState.apiClient.updateSchedule(deviceId: deviceId, windows: windows)
-            onSaved()
+            try await session.saveSchedule(windows)
             dismiss()
         } catch {
             errorMessage = error.localizedDescription

@@ -3,17 +3,15 @@
 //  OpenLink (parent app)
 //
 //  Set/clear an app's dailyLimitMinutes and toggle a hard `blocked` switch.
-//  PUT /devices/:deviceId/policies/:packageName
+//  PUT /policies/{packageName} on the child device.
 //
 
 import SwiftUI
 
 struct PolicyEditorView: View {
-    let deviceId: String
-    let row: AppUsageRow
-    var onSaved: () -> Void
+    @ObservedObject var session: DeviceSession
+    let app: AppEntry
 
-    @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
 
     @State private var isLimited: Bool
@@ -22,22 +20,21 @@ struct PolicyEditorView: View {
     @State private var isSaving = false
     @State private var errorMessage: String?
 
-    init(deviceId: String, row: AppUsageRow, onSaved: @escaping () -> Void) {
-        self.deviceId = deviceId
-        self.row = row
-        self.onSaved = onSaved
-        _isLimited = State(initialValue: row.dailyLimitMinutes != nil)
-        _limitMinutes = State(initialValue: Double(row.dailyLimitMinutes ?? 60))
-        _isBlocked = State(initialValue: row.blocked)
+    init(session: DeviceSession, app: AppEntry) {
+        self.session = session
+        self.app = app
+        _isLimited = State(initialValue: app.dailyLimitMinutes != nil)
+        _limitMinutes = State(initialValue: Double(app.dailyLimitMinutes ?? 60))
+        _isBlocked = State(initialValue: app.isBlocked)
     }
 
     var body: some View {
         Form {
-            Section(row.appName) {
-                Text(row.packageName)
+            Section(app.appName) {
+                Text(app.packageName)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text("\(row.minutesUsedToday) min used today")
+                Text("\(app.todayMinutes) min used today")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -67,6 +64,7 @@ struct PolicyEditorView: View {
             }
         }
         .navigationTitle("Edit App")
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel") { dismiss() }
@@ -87,16 +85,13 @@ struct PolicyEditorView: View {
         defer { isSaving = false }
 
         var body = PolicyUpdateRequest()
+        // "Not limited" is an explicit JSON null (clear the limit), not an
+        // omission — omitting would leave the existing limit in place.
         body.dailyLimitMinutes = isLimited ? .set(Int(limitMinutes)) : .clear
         body.blocked = isBlocked
 
         do {
-            _ = try await appState.apiClient.updatePolicy(
-                deviceId: deviceId,
-                packageName: row.packageName,
-                body: body
-            )
-            onSaved()
+            try await session.updatePolicy(packageName: app.packageName, body: body)
             dismiss()
         } catch {
             errorMessage = error.localizedDescription

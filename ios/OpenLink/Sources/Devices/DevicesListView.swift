@@ -2,10 +2,9 @@
 //  DevicesListView.swift
 //  OpenLink (parent app)
 //
-//  Dashboard: GET /devices, showing name, last-seen, lock status and a
-//  lock/unlock toggle (POST /devices/:deviceId/lock). Live-updates from
-//  Socket.IO `device:heartbeat`, with a ~30s foreground poll fallback for
-//  when the socket isn't connected.
+//  The list of PAIRED devices — held locally, not fetched from an account.
+//  Each row shows its own live connection state, whether it's visible on this
+//  Wi-Fi via Bonjour, and a lock/unlock toggle (POST /device/lock).
 //
 
 import SwiftUI
@@ -13,172 +12,178 @@ import SwiftUI
 struct DevicesListView: View {
     @EnvironmentObject private var appState: AppState
 
-    @State private var devices: [ChildDeviceSummary] = []
-    @State private var isLoading = false
-    @State private var errorMessage: String?
+    @State private var isPairing = false
     @State private var lockInFlight: Set<String> = []
-    @State private var hasLoadedOnce = false
-
-    private static let relativeFormatter: RelativeDateTimeFormatter = {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter
-    }()
 
     var body: some View {
-        Group {
-            if devices.isEmpty && !isLoading && hasLoadedOnce {
-                ContentUnavailableFallback(
-                    title: "No Paired Devices",
-                    message: "Use the Pair Device tab to link an Android device.",
-                    systemImage: "iphone.slash"
-                )
-            } else if devices.isEmpty && isLoading {
-                ProgressView()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                List {
-                    if let errorMessage {
-                        Section {
-                            Text(errorMessage)
-                                .foregroundStyle(.red)
-                                .font(.footnote)
-                        }
-                    }
-                    ForEach(devices) { device in
-                        NavigationLink(value: device.id) {
-                            deviceRow(device)
-                        }
+        List {
+            if !appState.registry.brokenDeviceIds.isEmpty {
+                Section("Needs Re-Pairing") {
+                    ForEach(appState.registry.brokenDeviceIds, id: \.self) { deviceId in
+                        brokenRow(deviceId)
                     }
                 }
-                .refreshable { await refresh() }
+            }
+
+            Section {
+                ForEach(appState.registry.sessions) { session in
+                    NavigationLink(value: session.deviceId) {
+                        deviceRow(session)
+                    }
+                }
             }
         }
         .navigationTitle("Devices")
         .navigationDestination(for: String.self) { deviceId in
-            DeviceDetailView(deviceId: deviceId)
-        }
-        .task {
-            appState.socketManager.onDeviceHeartbeat = { payload in
-                applyHeartbeat(payload)
+            if let session = appState.registry.session(for: deviceId) {
+                DeviceDetailView(session: session)
+            } else {
+                ContentUnavailableFallback(
+                    title: "Device Removed",
+                    message: "This device is no longer paired with this phone.",
+                    systemImage: "iphone.slash"
+                )
             }
-            await refresh()
-            await pollLoop()
+        }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    isPairing = true
+                } label: {
+                    Label("Pair Device", systemImage: "plus")
+                }
+            }
+        }
+        .sheet(isPresented: $isPairing) {
+            NavigationStack {
+                PairDeviceView()
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Cancel") { isPairing = false }
+                        }
+                    }
+            }
+        }
+        .refreshable {
+            await appState.registry.refreshAllOnForeground()
         }
     }
 
+    // MARK: - Rows
+
     @ViewBuilder
-    private func deviceRow(_ device: ChildDeviceSummary) -> some View {
+    private func deviceRow(_ session: DeviceSession) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
-                Text(device.name)
+                Text(session.device.deviceName)
                     .font(.headline)
-                Text(lastSeenText(device.lastSeenAt))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text("\(device.appCount) app\(device.appCount == 1 ? "" : "s") tracked")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 6) {
+                    ConnectionDot(state: session.connectionState)
+                    Text(statusText(session))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                HStack(spacing: 8) {
+                    if session.isOnLocalNetwork {
+                        Label("On this Wi-Fi", systemImage: "wifi")
+                    }
+                    if let battery = session.device.batteryLevel {
+                        Label("\(battery)%", systemImage: "battery.100")
+                    }
+                    if session.isSocketConnected {
+                        Label("Live", systemImage: "bolt.horizontal.fill")
+                    }
+                }
+                .font(.caption2)
+                .foregroundStyle(.secondary)
             }
             Spacer()
-            lockToggle(device)
+            lockToggle(session)
         }
         .padding(.vertical, 4)
     }
 
     @ViewBuilder
-    private func lockToggle(_ device: ChildDeviceSummary) -> some View {
+    private func brokenRow(_ deviceId: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Device \(deviceId.prefix(8))…")
+                .font(.headline)
+            Text("Its stored credentials are missing on this phone (they're never restored from a backup). Scan a fresh QR code to pair it again.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Button("Remove", role: .destructive) {
+                appState.registry.forgetBroken(deviceId: deviceId)
+            }
+            .font(.caption)
+        }
+        .padding(.vertical, 4)
+    }
+
+    @ViewBuilder
+    private func lockToggle(_ session: DeviceSession) -> some View {
         Button {
-            Task { await toggleLock(device) }
+            Task {
+                lockInFlight.insert(session.deviceId)
+                await session.setLock(!session.device.isLocked)
+                lockInFlight.remove(session.deviceId)
+            }
         } label: {
-            if lockInFlight.contains(device.id) {
+            if lockInFlight.contains(session.deviceId) {
                 ProgressView()
                     .frame(width: 28, height: 28)
             } else {
-                Image(systemName: device.isLocked ? "lock.fill" : "lock.open")
+                Image(systemName: session.device.isLocked ? "lock.fill" : "lock.open")
                     .font(.title3)
-                    .foregroundStyle(device.isLocked ? .red : .green)
+                    .foregroundStyle(session.device.isLocked ? .red : .green)
                     .frame(width: 28, height: 28)
             }
         }
         .buttonStyle(.plain)
-        .disabled(lockInFlight.contains(device.id))
+        .disabled(lockInFlight.contains(session.deviceId))
     }
 
-    private func lastSeenText(_ date: Date?) -> String {
-        guard let date else { return "Never seen" }
-        return "Last seen \(Self.relativeFormatter.localizedString(for: date, relativeTo: Date()))"
-    }
-
-    private func applyHeartbeat(_ payload: DeviceHeartbeatPayload) {
-        guard let index = devices.firstIndex(where: { $0.id == payload.deviceId }) else { return }
-        let existing = devices[index]
-        devices[index] = ChildDeviceSummary(
-            id: existing.id,
-            name: existing.name,
-            platform: existing.platform,
-            lastSeenAt: payload.lastSeenAt,
-            isLocked: existing.isLocked,
-            appCount: existing.appCount
-        )
-    }
-
-    private func toggleLock(_ device: ChildDeviceSummary) async {
-        lockInFlight.insert(device.id)
-        defer { lockInFlight.remove(device.id) }
-
-        let newValue = !device.isLocked
-        // Optimistic update, reverted on failure.
-        if let index = devices.firstIndex(where: { $0.id == device.id }) {
-            devices[index] = ChildDeviceSummary(
-                id: device.id, name: device.name, platform: device.platform,
-                lastSeenAt: device.lastSeenAt, isLocked: newValue, appCount: device.appCount
-            )
-        }
-        do {
-            _ = try await appState.apiClient.setLock(deviceId: device.id, locked: newValue)
-        } catch {
-            if let index = devices.firstIndex(where: { $0.id == device.id }) {
-                devices[index] = device // revert
+    private func statusText(_ session: DeviceSession) -> String {
+        switch session.connectionState {
+        case .idle:
+            return "Not connected yet"
+        case .connecting:
+            return "Connecting…"
+        case .connected(let via):
+            return "Connected via \(via)"
+        case .failed:
+            if let last = session.device.lastConnectedAt {
+                let formatter = RelativeDateTimeFormatter()
+                formatter.unitsStyle = .abbreviated
+                return "Unreachable — last seen \(formatter.localizedString(for: last, relativeTo: Date()))"
             }
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    private func refresh() async {
-        isLoading = true
-        errorMessage = nil
-        defer {
-            isLoading = false
-            hasLoadedOnce = true
-        }
-        do {
-            let fetched = try await appState.apiClient.fetchDevices()
-            devices = fetched
-            for device in fetched {
-                appState.deviceNames[device.id] = device.name
-            }
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    /// Foreground fallback poll every ~30s, only while the socket isn't
-    /// connected (docs/API.md: "iOS falls back to polling GET /devices and
-    /// GET /requests when the app is foregrounded").
-    private func pollLoop() async {
-        while !Task.isCancelled {
-            try? await Task.sleep(for: .seconds(30))
-            if Task.isCancelled { break }
-            if !appState.socketManager.isConnected {
-                await refresh()
-            }
+            return "Unreachable"
         }
     }
 }
 
-/// Small ContentUnavailableView-style fallback that also works pre-iOS 17
-/// (deployment target here is iOS 16).
+/// Small coloured dot summarising a device's connection state.
+struct ConnectionDot: View {
+    let state: DeviceSession.ConnectionState
+
+    var body: some View {
+        Circle()
+            .fill(color)
+            .frame(width: 8, height: 8)
+    }
+
+    private var color: Color {
+        switch state {
+        case .idle: return .gray
+        case .connecting: return .orange
+        case .connected: return .green
+        case .failed: return .red
+        }
+    }
+}
+
+/// ContentUnavailableView-style fallback that works on iOS 16.
 struct ContentUnavailableFallback: View {
     let title: String
     let message: String
@@ -199,11 +204,4 @@ struct ContentUnavailableFallback: View {
         .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
-}
-
-#Preview {
-    NavigationStack {
-        DevicesListView()
-    }
-    .environmentObject(AppState())
 }

@@ -2,14 +2,14 @@
 //  OpenLinkApp.swift
 //  OpenLink (parent app)
 //
-//  SwiftUI app entry point.
+//  SwiftUI app entry point. No UIApplicationDelegate any more: the only
+//  reason there was one was APNs registration, which no longer exists.
 //
 
 import SwiftUI
 
 @main
 struct OpenLinkApp: App {
-    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var appState = AppState()
     @Environment(\.scenePhase) private var scenePhase
 
@@ -17,10 +17,16 @@ struct OpenLinkApp: App {
         WindowGroup {
             RootView()
                 .environmentObject(appState)
+                .task { appState.startAll() }
         }
-        .onChange(of: scenePhase) { _, newPhase in
-            if newPhase == .active {
-                appState.reconnectSocketIfNeeded()
+        .onChange(of: scenePhase) { newPhase in
+            switch newPhase {
+            case .active:
+                appState.handleForeground()
+            case .background:
+                appState.handleBackground()
+            default:
+                break
             }
         }
     }

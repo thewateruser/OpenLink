@@ -2,169 +2,224 @@
 //  DeviceDetailView.swift
 //  OpenLink (parent app)
 //
-//  GET /devices/:deviceId — lists the device's apps with today's usage and
-//  per-app daily limit, plus a link into the schedule/downtime editor.
+//  One child device: lock control, downtime schedule, per-app limits from
+//  GET /apps, and the connection/endpoint details.
 //
 
 import SwiftUI
 
-/// A merged view of one app's policy (if any) and today's usage (if any),
-/// keyed by packageName. AppPolicy and UsageRecord are separate arrays in
-/// the API response, so this ties them together for display.
-struct AppUsageRow: Identifiable {
-    let packageName: String
-    let appName: String
-    let dailyLimitMinutes: Int?
-    let blocked: Bool
-    let minutesUsedToday: Int
-
-    var id: String { packageName }
-}
-
 struct DeviceDetailView: View {
-    let deviceId: String
+    @ObservedObject var session: DeviceSession
 
     @EnvironmentObject private var appState: AppState
 
-    @State private var detail: ChildDeviceDetail?
-    @State private var isLoading = false
-    @State private var errorMessage: String?
-    @State private var isTogglingLock = false
-    @State private var editingRow: AppUsageRow?
+    @State private var editingApp: AppEntry?
     @State private var showScheduleEditor = false
+    @State private var showEndpoints = false
+    @State private var showUnpairConfirmation = false
+    @State private var isTogglingLock = false
+    @State private var hidesSystemApps = true
 
     var body: some View {
-        Group {
-            if let detail {
-                List {
-                    Section {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(detail.name).font(.headline)
-                                if let timezone = detail.timezone {
-                                    Text(timezone).font(.caption).foregroundStyle(.secondary)
-                                }
-                                Text(lastSeenText(detail.lastSeenAt))
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Button {
-                                Task { await toggleLock() }
-                            } label: {
-                                if isTogglingLock {
-                                    ProgressView()
-                                } else {
-                                    Label(
-                                        detail.isLocked ? "Locked" : "Unlocked",
-                                        systemImage: detail.isLocked ? "lock.fill" : "lock.open"
-                                    )
-                                    .foregroundStyle(detail.isLocked ? .red : .green)
-                                }
-                            }
-                            .disabled(isTogglingLock)
-                        }
-                    }
-
-                    Section("Downtime Schedule") {
-                        Button {
-                            showScheduleEditor = true
-                        } label: {
-                            HStack {
-                                Text(scheduleSummary(detail.schedule))
-                                Spacer()
-                                Image(systemName: "chevron.right").foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-
-                    Section("Apps") {
-                        if appRows.isEmpty {
-                            Text("No apps reported yet. The Android app syncs its app catalog automatically.")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        }
-                        ForEach(appRows) { row in
-                            Button {
-                                editingRow = row
-                            } label: {
-                                appRowView(row)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-                .refreshable { await refresh() }
-            } else if isLoading {
-                ProgressView()
-            } else if let errorMessage {
-                ContentUnavailableFallback(
-                    title: "Couldn't Load Device",
-                    message: errorMessage,
-                    systemImage: "exclamationmark.triangle"
-                )
-            }
+        List {
+            statusSection
+            lockSection
+            scheduleSection
+            appsSection
+            connectionSection
+            dangerSection
         }
-        .navigationTitle(detail?.name ?? "Device")
-        .task { await refresh() }
-        .sheet(item: $editingRow) { row in
+        .navigationTitle(session.device.deviceName)
+        .navigationBarTitleDisplayMode(.inline)
+        .refreshable { await session.refresh() }
+        .task { await session.refresh() }
+        .sheet(item: $editingApp) { app in
             NavigationStack {
-                PolicyEditorView(deviceId: deviceId, row: row) {
-                    Task { await refresh() }
-                }
+                PolicyEditorView(session: session, app: app)
             }
         }
         .sheet(isPresented: $showScheduleEditor) {
             NavigationStack {
-                ScheduleEditorView(deviceId: deviceId, initialWindows: detail?.schedule ?? []) {
-                    Task { await refresh() }
+                ScheduleEditorView(session: session, initialWindows: session.schedule)
+            }
+        }
+        .sheet(isPresented: $showEndpoints) {
+            NavigationStack {
+                EndpointsView(session: session)
+            }
+        }
+        .confirmationDialog(
+            "Remove “\(session.device.deviceName)”?",
+            isPresented: $showUnpairConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Remove Device", role: .destructive) {
+                Task { await appState.registry.unpair(deviceId: session.deviceId) }
+            }
+        } message: {
+            Text("This phone will forget the device's token and pinned certificate, and will ask the device to revoke this parent. Enforcement on the child device keeps running.")
+        }
+    }
+
+    // MARK: - Sections
+
+    @ViewBuilder
+    private var statusSection: some View {
+        Section {
+            HStack(spacing: 8) {
+                ConnectionDot(state: session.connectionState)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(connectionSummary)
+                        .font(.subheadline)
+                    if let info = session.deviceInfo {
+                        Text([info.platform, info.appVersion].compactMap { $0 }.joined(separator: " · "))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                if session.isOnLocalNetwork {
+                    Image(systemName: "wifi")
+                        .foregroundStyle(.green)
+                }
+            }
+
+            if let failure = session.connectionState.describedFailure {
+                Text(failure)
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+                Button("Try Again") { session.reconnect() }
+                    .font(.footnote)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var lockSection: some View {
+        Section {
+            HStack {
+                Label(
+                    session.device.isLocked ? "Device is locked" : "Device is unlocked",
+                    systemImage: session.device.isLocked ? "lock.fill" : "lock.open"
+                )
+                .foregroundStyle(session.device.isLocked ? .red : .green)
+                Spacer()
+                if isTogglingLock {
+                    ProgressView()
+                } else {
+                    Button(session.device.isLocked ? "Unlock" : "Lock Now") {
+                        Task {
+                            isTogglingLock = true
+                            await session.setLock(!session.device.isLocked)
+                            isTogglingLock = false
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+            if !session.connectionState.isConnected {
+                Text("Locking needs a live connection — a lock can't be delivered to a device that can't be reached.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var scheduleSection: some View {
+        Section("Downtime Schedule") {
+            Button {
+                showScheduleEditor = true
+            } label: {
+                HStack {
+                    Text(scheduleSummary)
+                        .foregroundStyle(.primary)
+                    Spacer()
+                    Image(systemName: "chevron.right").foregroundStyle(.secondary)
                 }
             }
         }
     }
 
-    private var appRows: [AppUsageRow] {
-        guard let detail else { return [] }
-        var usageByPackage: [String: Int] = [:]
-        for record in detail.usage {
-            usageByPackage[record.packageName] = record.minutesUsed
+    @ViewBuilder
+    private var appsSection: some View {
+        Section {
+            if visibleApps.isEmpty {
+                Text(session.apps.isEmpty
+                     ? "No apps reported yet. Connect to the device to list them."
+                     : "All installed apps are system apps.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(visibleApps) { app in
+                Button {
+                    editingApp = app
+                } label: {
+                    appRow(app)
+                }
+                .buttonStyle(.plain)
+            }
+        } header: {
+            HStack {
+                Text("Apps")
+                Spacer()
+                Toggle("Hide system apps", isOn: $hidesSystemApps)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .scaleEffect(0.8)
+            }
+        } footer: {
+            Text(hidesSystemApps ? "System apps are hidden." : "Showing all installed apps.")
         }
-
-        var rows: [String: AppUsageRow] = [:]
-        for policy in detail.policies {
-            rows[policy.packageName] = AppUsageRow(
-                packageName: policy.packageName,
-                appName: policy.appName ?? policy.packageName,
-                dailyLimitMinutes: policy.dailyLimitMinutes,
-                blocked: policy.blocked,
-                minutesUsedToday: usageByPackage[policy.packageName] ?? 0
-            )
-        }
-        // Usage rows for apps that have usage today but no policy yet.
-        for record in detail.usage where rows[record.packageName] == nil {
-            rows[record.packageName] = AppUsageRow(
-                packageName: record.packageName,
-                appName: record.packageName,
-                dailyLimitMinutes: nil,
-                blocked: false,
-                minutesUsedToday: record.minutesUsed
-            )
-        }
-        return rows.values.sorted { $0.appName.localizedCaseInsensitiveCompare($1.appName) == .orderedAscending }
     }
 
     @ViewBuilder
-    private func appRowView(_ row: AppUsageRow) -> some View {
+    private var connectionSection: some View {
+        Section("Connection") {
+            Button {
+                showEndpoints = true
+            } label: {
+                HStack {
+                    Text("Addresses")
+                        .foregroundStyle(.primary)
+                    Spacer()
+                    Text("\(session.device.endpoints.count)")
+                        .foregroundStyle(.secondary)
+                    Image(systemName: "chevron.right").foregroundStyle(.secondary)
+                }
+            }
+            Label(
+                session.isSocketConnected ? "Live updates connected" : "Live updates off — polling every 30s",
+                systemImage: session.isSocketConnected ? "bolt.horizontal.fill" : "arrow.clockwise"
+            )
+            .font(.footnote)
+            .foregroundStyle(session.isSocketConnected ? .green : .secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var dangerSection: some View {
+        Section {
+            Button("Remove This Device", role: .destructive) {
+                showUnpairConfirmation = true
+            }
+        }
+    }
+
+    // MARK: - Rows and helpers
+
+    @ViewBuilder
+    private func appRow(_ app: AppEntry) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
-                Text(row.appName)
+                Text(app.appName)
                     .foregroundStyle(.primary)
-                Text(row.packageName)
+                Text(app.packageName)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-                HStack(spacing: 8) {
-                    Text("\(row.minutesUsedToday) min today")
-                    if let limit = row.dailyLimitMinutes {
+                HStack(spacing: 4) {
+                    Text("\(app.todayMinutes) min today")
+                    if let limit = app.dailyLimitMinutes {
                         Text("· limit \(limit) min")
                     } else {
                         Text("· unlimited")
@@ -174,7 +229,7 @@ struct DeviceDetailView: View {
                 .foregroundStyle(.secondary)
             }
             Spacer()
-            if row.blocked {
+            if app.isBlocked {
                 Text("Blocked")
                     .font(.caption2.bold())
                     .padding(.horizontal, 8)
@@ -187,39 +242,21 @@ struct DeviceDetailView: View {
         .padding(.vertical, 2)
     }
 
-    private func scheduleSummary(_ windows: [ScheduleWindow]) -> String {
-        windows.isEmpty ? "No downtime windows set" : "\(windows.count) downtime window\(windows.count == 1 ? "" : "s")"
+    private var visibleApps: [AppEntry] {
+        hidesSystemApps ? session.apps.filter { !$0.isSystemApp } : session.apps
     }
 
-    private func lastSeenText(_ date: Date?) -> String {
-        guard let date else { return "Never seen" }
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return "Last seen \(formatter.localizedString(for: date, relativeTo: Date()))"
+    private var scheduleSummary: String {
+        let count = session.schedule.count
+        return count == 0 ? "No downtime windows set" : "\(count) downtime window\(count == 1 ? "" : "s")"
     }
 
-    private func toggleLock() async {
-        guard let detail else { return }
-        isTogglingLock = true
-        defer { isTogglingLock = false }
-        do {
-            _ = try await appState.apiClient.setLock(deviceId: deviceId, locked: !detail.isLocked)
-            await refresh()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    private func refresh() async {
-        isLoading = detail == nil
-        defer { isLoading = false }
-        do {
-            let fetched = try await appState.apiClient.fetchDevice(id: deviceId)
-            detail = fetched
-            appState.deviceNames[fetched.id] = fetched.name
-            errorMessage = nil
-        } catch {
-            errorMessage = error.localizedDescription
+    private var connectionSummary: String {
+        switch session.connectionState {
+        case .idle: return "Not connected"
+        case .connecting: return "Connecting…"
+        case .connected(let via): return "Connected via \(via)"
+        case .failed: return "Can't reach this device"
         }
     }
 }

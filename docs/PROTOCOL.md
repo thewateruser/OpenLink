@@ -39,9 +39,14 @@ server": no VPS, no domain, no deployment, no maintenance.
 ### Endpoint learning
 
 Every authenticated response to `GET /device` includes the child's current
-reachable addresses (all non-loopback interface addresses, plus its NSD
-hostname). The parent app merges these into a per-device endpoint list and
-persists it.
+reachable addresses as `host:port` strings. The parent merges these into a
+per-device endpoint list and persists it.
+
+The child reports **only addresses it can actually confirm**: every
+non-loopback, non-link-local interface address it is bound to. It
+deliberately does *not* report its mDNS hostname, because a name it merely
+guesses (rather than one it has verified resolves from outside) would sit
+in the parent's endpoint race burning a timeout on every connection.
 
 This means a device paired on home Wi-Fi **automatically learns its overlay
 address** the first time it connects while the overlay is up — the user
@@ -77,6 +82,11 @@ openlink://pair?v=1
   successful pairing or on expiry.
 - `fp` is the certificate fingerprint. The parent pins **exactly** this
   fingerprint for this device, forever.
+- `name` is percent-encoded (a space is `%20`, never `+`).
+
+**All base64url in this protocol** — `fp`, `psk`, `parentId`, `proof`,
+`parentToken` — is URL-safe (`-`/`_`), **unpadded**, and unwrapped.
+Decoders should accept padding anyway; encoders must not emit it.
 
 Then:
 
@@ -89,6 +99,14 @@ Then:
    ```
    proof = base64url(HMAC-SHA256(key = psk, msg = "openlink-pair-v1" || parentId))
    ```
+   **Exact byte inputs** (get these wrong and pairing fails with no useful
+   diagnostic, so they are specified rather than implied):
+   - `key` is the **32 raw decoded bytes** of `psk`.
+   - `msg` is the ASCII bytes of `openlink-pair-v1` followed immediately by
+     the **UTF-8 bytes of the base64url `parentId` text**, exactly as it
+     appears in the JSON body — *not* its 32 decoded bytes. The wire form is
+     the one representation both peers are guaranteed to hold identically.
+   - There is no separator between the two parts.
 3. `POST /pair` `{ parentId, parentName, proof }`
 4. Child recomputes the HMAC, compares in constant time, and on success
    returns `{ deviceId, deviceName, parentToken, endpoints }` where
@@ -99,6 +117,12 @@ Then:
 `psk` is invalidated immediately after step 4. The pairing endpoint is the
 only unauthenticated route, and it is rate-limited (5 attempts/minute,
 rejecting all attempts once a valid pairing completes and the screen closes).
+
+Because of that rate limit and the single-use `psk`, a parent with several
+candidate endpoints from `ep=` must try them **strictly sequentially**.
+Racing them in parallel would burn most of the attempt budget and risks one
+attempt invalidating the `psk` while another is still in flight. (Ordinary
+post-pairing connections have no such constraint and *are* raced.)
 
 ## Authentication (all other routes)
 
@@ -156,6 +180,31 @@ UTC. Base path is the root — e.g. `https://100.101.102.103:8765/device`.
 `TimeRequest` is `{ id, packageName, appName, minutesRequested, message?,
 status, grantedMinutes?, responseNote?, createdAt, respondedAt? }`.
 
+## Wire-format details
+
+Small things that two independent implementations would otherwise have to
+guess at, and would then disagree about:
+
+- **`ScheduleWindow.id`** is a JSON **number**, assigned by the child.
+  Omit it when creating a window; echo it back to update one. Parsers
+  should tolerate a string for robustness.
+- **`policy` in `GET /apps`** is always present, never `null`. An app with
+  no restrictions has `dailyLimitMinutes: null` and `blocked: false`.
+- **`batteryLevel`** is an integer percentage `0`–`100`, or `null` if
+  unknown.
+- **`daysOfWeek`** is a bitmask with **bit 0 = Sunday** through bit 6 =
+  Saturday. `0` means the window never fires.
+- **A window where `endMinute <= startMinute` wraps past midnight** — this
+  is the normal case for a bedtime schedule (e.g. `1320`–`420` is
+  22:00–07:00).
+- **Errors** are `{ "error": "<human-readable message>" }` with a meaningful
+  HTTP status. `401` means the token is bad or revoked and the parent should
+  surface a re-pair prompt; `409` means the request was already answered by
+  another parent.
+- **Approve/deny emit no WebSocket event.** The responding parent has the
+  result in its HTTP response, and other parents reconcile via
+  `GET /requests` on their next poll or foreground.
+
 ## WebSocket (`/events`)
 
 The parent opens `wss://<endpoint>/events` on the same pinned TLS
@@ -207,3 +256,16 @@ This is the normal case, and it's fine:
   every non-MDM parental control app on Android, OpenLink included. Real
   tamper-resistance needs Android Enterprise Device Owner provisioning,
   which is a much larger undertaking.
+- **No certificate rotation.** The pin is on the leaf certificate, so if the
+  child regenerates its identity (reinstall, Keystore wipe) every parent must
+  re-pair. That's the safe failure mode — a changed fingerprint means *stop*,
+  never *trust it anyway* — but it is a real operational cost, and a reinstall
+  is genuinely a new trust context.
+- **WebSocket authentication happens at the handshake only.** Revoking a
+  parent therefore can't instantly kill a socket it already holds; the child
+  re-checks a revocation epoch on its periodic broadcast, so an evicted
+  parent's live connection dies within about a minute rather than
+  immediately.
+- **There is no protocol signal for "device admin was revoked."** The parent
+  can't currently be told that enforcement was disabled on the child, which
+  is exactly the event a parent would most want to know about. Worth adding.

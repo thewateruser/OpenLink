@@ -11,9 +11,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Divider
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -46,7 +48,9 @@ import com.openlink.child.network.model.SyncAppsRequest
 import com.openlink.child.network.model.TimeRequestCreate
 import com.openlink.child.ui.requesttime.RequestTimeDialog
 import com.openlink.child.util.todayDateString
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class AppUsageRow(
     val packageName: String,
@@ -57,6 +61,7 @@ data class AppUsageRow(
 )
 
 /** Status/home screen: installed apps with today's usage + effective limit (item 8 of the spec). */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(initialRequestPackage: String? = null, onOpenSettings: () -> Unit = {}) {
     val context = LocalContext.current
@@ -164,9 +169,9 @@ fun HomeScreen(initialRequestPackage: String? = null, onOpenSettings: () -> Unit
     }
 }
 
-private suspend fun installedApps(context: Context): List<InstalledApp> {
+private suspend fun installedApps(context: Context): List<InstalledApp> = withContext(Dispatchers.IO) {
     val pm = context.packageManager
-    return pm.getInstalledApplications(PackageManager.GET_META_DATA)
+    pm.getInstalledApplications(PackageManager.GET_META_DATA)
         .filter { app ->
             (app.flags and ApplicationInfo.FLAG_SYSTEM) == 0 || pm.getLaunchIntentForPackage(app.packageName) != null
         }

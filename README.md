@@ -1,115 +1,130 @@
 # OpenLink
 
-OpenLink is a FOSS alternative to Google Family Link, with a twist: the
-**managed device is Android**, and the **parent/controller app is iOS**. A
-parent with an iPhone can set per-app daily time limits on their kid's
-Android phone, lock it remotely, schedule downtime (e.g. bedtime), and
-approve or deny "can I have 15 more minutes?" requests — all self-hosted,
-no Google account or cloud service required.
+OpenLink is a FOSS alternative to Google Family Link, with two twists: the
+**managed device is Android**, the **parent's app is iOS** — and there is
+**no server**. The two phones talk to each other directly.
 
-## How it fits together
+A parent with an iPhone can set per-app daily time limits on their kid's
+Android phone, lock it remotely, schedule downtime, and approve or deny
+"can I have 15 more minutes?" requests. No Google account, no cloud
+service, and nothing for you to host or maintain.
+
+## How it works
+
+The Android child device *is* the server. It already runs a foreground
+service to enforce screen time, so it hosts a small TLS HTTP + WebSocket
+listener in that same service. The iOS app connects to it directly.
 
 ```
-   iOS app (parent)              OpenLink Server              Android app (child)
-  ─────────────────           ───────────────────           ─────────────────────
-  SwiftUI, ios/                Node/TS + Express +            Kotlin/Compose,
-                                Prisma + Socket.IO,            android/
-                                server/
-        │                             │                              │
-        │  REST (JWT auth)            │                              │
-        ├────────────────────────────>│<─────────────────────────────┤
-        │                             │   REST (device-token auth)   │
-        │  Socket.IO (family room)    │   Socket.IO (device room)    │
-        ├────────────────────────────>│<─────────────────────────────┤
+   iOS parent app                                   Android child device
+   ──────────────                                   ────────────────────
+   scan QR once  ──────── pairs, pins TLS cert ────>  shows pairing QR
+   Bonjour browse ─────── finds it on Wi-Fi ───────>  advertises _openlink._tcp
+   HTTPS + WSS  <──────── direct connection ───────>  :8765
 ```
 
-- **`server/`** — the backend both apps talk to. Owns accounts, pairing,
-  policies, usage history, and time requests; pushes realtime updates over
-  Socket.IO and falls back to polling. See [`docs/API.md`](docs/API.md)
-  for the full contract and [`server/README.md`](server/README.md) to run it.
-- **`android/`** — the app installed on the managed device. Reads today's
-  per-app usage via `UsageStatsManager`, enforces limits/blocklist/downtime
-  with an `AccessibilityService`-driven full-screen overlay, and can be
-  remotely locked via Android's Device Admin APIs. See
-  [`android/README.md`](android/README.md).
-- **`ios/`** — the parent's controller app: pairing, per-app limits,
-  remote lock, downtime schedules, and the approve/deny queue for time
-  requests. See [`ios/README.md`](ios/README.md).
+The child device owns all the data — policies, schedules, usage tallies,
+pending requests — in its local database. Nothing syncs anywhere. A pleasant
+side effect: enforcement keeps working perfectly when nothing is connected,
+because it never needed the network to begin with.
+
+See [`docs/PROTOCOL.md`](docs/PROTOCOL.md) for the full protocol and
+security model.
+
+## Away from home
+
+At home, the two phones find each other over Wi-Fi automatically. Away from
+home, you need a way for the iPhone to reach the Android phone across the
+internet — and doing that *without* a middleman means putting both devices
+on an overlay network:
+
+1. Install [Tailscale](https://tailscale.com/) on both phones (free tier,
+   open-source clients) and sign in to the same account. Self-managed
+   WireGuard works identically if you prefer.
+2. That's it. Each device gets a stable address reachable from anywhere.
+
+**You don't have to configure anything in OpenLink for this.** Pair at home
+over Wi-Fi, and the child device reports all of its current addresses on
+every connection — including the Tailscale one. The parent app learns it
+automatically and uses it the next time you're away.
+
+This is not "hosting a server": there's no VPS, no domain, no deployment,
+no database, no updates to apply. You install an app on two phones.
+
+### Why not NAT hole-punching?
+
+It was considered and deliberately rejected. Mobile carriers are nearly
+universally behind CGNAT, where hole-punching fails and needs a TURN relay
+to fall back on — which is a server again, just someone else's. It would
+fail exactly when you most need it to work. An overlay network solves the
+same problem reliably.
 
 ## Core features
 
-- **Pairing** — the parent generates a 6-character code (+ QR) in the iOS
-  app; the Android app claims it once to link to the family.
-- **Per-app daily time limits** — set in minutes per installed app.
-- **Hard blocking** — some apps can be blocked outright, independent of time.
+- **Pairing** — the child device shows a QR code; the parent scans it once.
+  The QR carries the device's TLS certificate fingerprint, which the parent
+  app pins permanently, so the connection is authenticated end-to-end.
+- **Per-app daily time limits**, in minutes, per installed app.
+- **Hard blocking** — some apps blocked outright, independent of time.
 - **Downtime schedules** — recurring windows (e.g. school nights 9pm–7am)
   where everything but a small allow-list is blocked.
-- **Remote lock** — lock the Android device immediately from the iOS app.
-- **"Ask for more time"** — the child requests extra minutes for a specific
-  app with an optional message; the parent approves (with a minute count)
-  or denies from a live queue.
-- **Works offline-ish** — the Android app caches policies locally and keeps
-  enforcing them if connectivity drops; both apps fall back to polling if
-  the realtime socket is down.
-
-## Quick start
-
-1. **Run the server** (see [`server/README.md`](server/README.md) for detail):
-   ```bash
-   cd server
-   npm install
-   cp .env.example .env   # set a real JWT_SECRET
-   npx prisma migrate dev
-   npm run dev
-   ```
-   or `docker compose up --build` from the repo root.
-2. **Build the Android app** in Android Studio from `android/`, point it at
-   your server's URL in the onboarding screen.
-3. **Build the iOS app**: `cd ios && xcodegen generate && open OpenLink.xcodeproj`,
-   point it at the same server URL, register a family account, and generate
-   a pairing code to link the Android device.
-
-## Project status — read this before relying on it
-
-This was built end-to-end in one sitting as a functional MVP, not a
-security-audited, store-ready product. Being honest about where things
-stand:
-
-- **`server/`** is implemented, typechecked, and covered by an end-to-end
-  test (`npm test` in `server/`) that exercises register → pair → set
-  policy → heartbeat usage → request/approve time, plus auth and
-  cross-family isolation checks. It runs.
-- **`android/`** and **`ios/`** were written carefully against
-  [`docs/API.md`](docs/API.md) but **could not be compiled in this
-  environment** (no Android SDK or macOS/Xcode toolchain available here).
-  Treat them as strong first drafts: open them in Android Studio / Xcode,
-  fix whatever SDK-version or dependency-resolution issues come up, and
-  test on real devices before trusting them with an actual kid's phone.
-- **Not implemented**: push notifications (APNs) end-to-end — the iOS app
-  relies on Socket.IO + polling, which works but isn't as instant as a
-  push notification for a pending time request; multi-parent permission
-  tiers; usage history/analytics beyond "today"; iOS-as-managed-device
-  support (Apple's Screen Time APIs are a different, much more restrictive
-  integration than Android's Device Admin/Accessibility APIs and weren't
-  in scope here).
-- **Android enforcement depends on the user granting several powerful
-  permissions** (Usage Access, Draw Over Other Apps, Accessibility
-  Service, Device Admin, notifications). All of these are things a
-  motivated teenager can revoke from Settings to defeat the app — same
-  fundamental limitation Family Link, Bark, and every non-MDM parental
-  control app on Android has. A production deployment for anything beyond
-  a cooperative household would want Android Enterprise / a Device Owner
-  provisioning flow, which is a significantly bigger lift.
-- Passwords are bcrypt-hashed and device tokens are stored as SHA-256
-  hashes, but there's no rate limiting, email verification, or password
-  reset flow yet — see `server/README.md`'s notes section.
+- **Remote lock** — lock the Android device immediately from the iPhone.
+- **"Ask for more time"** — the kid requests extra minutes for a specific
+  app with a message; the parent approves with a minute count, or denies.
+  Requests queue on the device and are delivered when a parent connects.
+- **Multiple parents** — several iPhones can pair with one child device,
+  each with its own credentials, and any of them can revoke another.
 
 ## Repo layout
 
 ```
-docs/API.md       full REST + Socket.IO contract (read this first)
-server/           Node/TS backend (Express, Prisma/SQLite, Socket.IO)
-android/          Kotlin/Compose app for the managed Android device
-ios/              SwiftUI app for the parent (XcodeGen project)
-docker-compose.yml   one-command self-hosted server deploy
+docs/PROTOCOL.md   the P2P protocol + security model (read this first)
+android/           Kotlin/Compose app for the managed device — and the host
+ios/               SwiftUI app for the parent (XcodeGen project)
 ```
+
+## Building
+
+**Android:** open `android/` in Android Studio, let Gradle sync, run.
+minSdk 26, compileSdk 34. See [`android/README.md`](android/README.md).
+
+**iOS:** `cd ios && xcodegen generate && open OpenLink.xcodeproj`. Requires
+Xcode 15+ and [XcodeGen](https://github.com/yonaskolb/XcodeGen). No third-party
+Swift packages. See [`ios/README.md`](ios/README.md).
+
+Then open the Android app, grant the permissions it asks for, show the
+pairing QR, and scan it with the iOS app.
+
+## Project status — read this before relying on it
+
+Built as a functional MVP, not a security-audited, store-ready product.
+Being straight about where things stand:
+
+- **Neither app has been compiled.** They were written in an environment
+  with no Android SDK and no macOS/Xcode toolchain. Both were written
+  carefully and cross-checked for internal consistency, but expect to fix
+  real issues on first build. Each app's README says the same thing in
+  more detail.
+- **The security model is sound on paper but unreviewed in practice.** The
+  QR-delivered certificate fingerprint gives genuine out-of-band
+  authentication and defeats MITM, tokens are compared in constant time,
+  and the pairing secret is single-use and expiring. But a network listener
+  that can lock a phone deserves a real audit before you trust it on a
+  network you don't control.
+- **No push notifications, by construction.** Waking a closed iOS app needs
+  APNs, which needs a provider server holding Apple credentials. Shipping
+  those inside the child app would be a serious vulnerability, so OpenLink
+  doesn't. The parent sees pending requests on opening the app; if the app
+  is merely backgrounded with a live socket, it raises a local notification.
+- **Android enforcement can be defeated by someone with physical access**,
+  by revoking the accessibility or device-admin permission or uninstalling
+  the app. This is true of every non-MDM parental control app on Android —
+  Family Link included. Real tamper-resistance requires Android Enterprise
+  Device Owner provisioning, a substantially bigger undertaking.
+- **Not implemented**: usage history beyond 30 days, per-parent permission
+  tiers, iOS-as-managed-device (Apple's Screen Time APIs are a different and
+  far more restrictive integration).
+
+OpenLink works best as a tool for a cooperative household — one where the
+rules are agreed on and the app enforces them consistently, rather than one
+where it's an adversarial lock to be beaten.

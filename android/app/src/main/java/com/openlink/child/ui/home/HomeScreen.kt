@@ -1,7 +1,6 @@
 package com.openlink.child.ui.home
 
 import android.content.Context
-import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -24,7 +23,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -37,20 +35,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.openlink.child.data.AppDatabase
 import com.openlink.child.data.PolicyEntity
+import com.openlink.child.data.TimeRequestEntity
 import com.openlink.child.data.UsageEntity
-import com.openlink.child.data.toEntity
+import com.openlink.child.domain.ChildRepository
 import com.openlink.child.enforcement.AlwaysAllowed
 import com.openlink.child.enforcement.EnforcementRepository
-import com.openlink.child.network.NetworkModule
-import com.openlink.child.network.OpenLinkApi
-import com.openlink.child.network.model.InstalledApp
-import com.openlink.child.network.model.SyncAppsRequest
-import com.openlink.child.network.model.TimeRequestCreate
+import com.openlink.child.server.ServerState
 import com.openlink.child.ui.requesttime.RequestTimeDialog
 import com.openlink.child.util.todayDateString
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 data class AppUsageRow(
     val packageName: String,
@@ -60,36 +53,30 @@ data class AppUsageRow(
     val blocked: Boolean
 )
 
-/** Status/home screen: installed apps with today's usage + effective limit (item 8 of the spec). */
+/**
+ * The child's own view: what they've used today, what the limits are, and a way to ask for more.
+ *
+ * Every number here comes straight out of the local database, because that database is now the
+ * only place any of it exists. Nothing on this screen depends on a parent being reachable.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(initialRequestPackage: String? = null, onOpenSettings: () -> Unit = {}) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val db = remember { AppDatabase.getInstance(context) }
+    val repository = remember { ChildRepository.getInstance(context) }
     val today = remember { todayDateString() }
 
     val policies by db.policyDao().observeAll().collectAsState(initial = emptyList())
     val usage by db.usageDao().observeForDate(today).collectAsState(initial = emptyList())
     val requests by db.requestDao().observeAll().collectAsState(initial = emptyList())
     val isLocked by EnforcementRepository.lockState.collectAsState()
+    val serverStatus by ServerState.snapshot.collectAsState()
 
     var requestDialogPackage by remember { mutableStateOf(initialRequestPackage) }
 
-    val rows = remember(policies, usage) { buildRows(context, policies, usage) }
-
-    // Best-effort catalog sync so the parent app can show names instead of raw package ids
-    // (POST /device/apps). Failing silently here is fine: MonitorForegroundService's fallback
-    // polling loop and the next heartbeat don't depend on this succeeding.
-    LaunchedEffect(Unit) {
-        try {
-            val apps = installedApps(context)
-            NetworkModule.buildRetrofit(context).create(OpenLinkApi::class.java)
-                .syncApps(SyncAppsRequest(apps))
-        } catch (e: Exception) {
-            // offline at startup; will retry the next time this screen is shown
-        }
-    }
+    val rows = remember(policies, usage, requests) { buildRows(context, policies, usage, requests, today) }
 
     Scaffold(
         topBar = {
@@ -109,6 +96,18 @@ fun HomeScreen(initialRequestPackage: String? = null, onOpenSettings: () -> Unit
                     )
                 }
             }
+
+            Text(
+                when {
+                    !serverStatus.running -> "Protection is not running."
+                    serverStatus.connectedParents > 0 ->
+                        "A parent's app is connected right now."
+                    else -> "Protection is running. No parent is connected."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(16.dp, 12.dp, 16.dp, 0.dp)
+            )
+
             if (requests.isNotEmpty()) {
                 Text(
                     "Recent requests",
@@ -116,16 +115,18 @@ fun HomeScreen(initialRequestPackage: String? = null, onOpenSettings: () -> Unit
                     modifier = Modifier.padding(16.dp, 12.dp, 16.dp, 4.dp)
                 )
                 Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-                    requests.take(3).forEach { req ->
-                        val grantedSuffix = req.grantedMinutes?.let { " (granted ${it}m)" } ?: ""
+                    requests.take(3).forEach { request ->
+                        val grantedSuffix = request.grantedMinutes?.let { " (granted ${it}m)" } ?: ""
                         Text(
-                            "${req.packageName}: ${req.minutesRequested}m requested - ${req.status}$grantedSuffix",
+                            "${request.appName ?: request.packageName}: " +
+                                "${request.minutesRequested}m requested - ${request.status}$grantedSuffix",
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
                 }
                 Spacer(Modifier.height(8.dp))
             }
+
             Text(
                 "Today's usage",
                 style = MaterialTheme.typography.titleMedium,
@@ -148,20 +149,15 @@ fun HomeScreen(initialRequestPackage: String? = null, onOpenSettings: () -> Unit
         }
     }
 
-    requestDialogPackage?.let { pkg ->
+    requestDialogPackage?.let { packageName ->
         RequestTimeDialog(
-            packageName = pkg,
+            packageName = packageName,
             onDismiss = { requestDialogPackage = null },
             onSubmit = { minutes, message ->
                 scope.launch {
-                    try {
-                        val api = NetworkModule.buildRetrofit(context).create(OpenLinkApi::class.java)
-                        val dto = api.createTimeRequest(TimeRequestCreate(pkg, minutes, message.ifBlank { null }))
-                        db.requestDao().upsert(dto.toEntity())
-                    } catch (e: Exception) {
-                        // Offline: the request wasn't created server-side. MVP simplification --
-                        // a production app would queue this locally and retry.
-                    }
+                    // Always succeeds: the row is written locally and waits for a parent. The
+                    // old server-backed version could silently drop a request when offline.
+                    repository.createRequest(packageName, minutes, message)
                     requestDialogPackage = null
                 }
             }
@@ -169,35 +165,40 @@ fun HomeScreen(initialRequestPackage: String? = null, onOpenSettings: () -> Unit
     }
 }
 
-private suspend fun installedApps(context: Context): List<InstalledApp> = withContext(Dispatchers.IO) {
-    val pm = context.packageManager
-    pm.getInstalledApplications(PackageManager.GET_META_DATA)
-        .filter { app ->
-            (app.flags and ApplicationInfo.FLAG_SYSTEM) == 0 || pm.getLaunchIntentForPackage(app.packageName) != null
-        }
-        .map { InstalledApp(it.packageName, pm.getApplicationLabel(it).toString()) }
-}
-
-private fun buildRows(context: Context, policies: List<PolicyEntity>, usage: List<UsageEntity>): List<AppUsageRow> {
+private fun buildRows(
+    context: Context,
+    policies: List<PolicyEntity>,
+    usage: List<UsageEntity>,
+    requests: List<TimeRequestEntity>,
+    today: String
+): List<AppUsageRow> {
     val pm = context.packageManager
     val usageByPackage = usage.associateBy { it.packageName }
+    val policiesByPackage = policies.associateBy { it.packageName }
+
+    // Extra minutes approved today, summed per package -- the same "effective limit" the
+    // enforcement engine applies, so the progress bar matches what actually blocks.
+    val grantedToday = requests
+        .filter { it.status == ChildRepository.STATUS_APPROVED && it.respondedAt?.startsWith(today) == true }
+        .groupBy { it.packageName }
+        .mapValues { (_, list) -> list.sumOf { it.grantedMinutes ?: 0 } }
+
     val allPackages = (policies.map { it.packageName } + usage.map { it.packageName }).toSet()
 
     return allPackages
         .filterNot { AlwaysAllowed.isAlwaysAllowed(context, it) }
-        .map { pkg ->
-            val policy = policies.find { it.packageName == pkg }
-            val minutesUsed = usageByPackage[pkg]?.minutesUsed ?: 0
-            val appName = policy?.appName ?: try {
-                pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+        .map { packageName ->
+            val policy = policiesByPackage[packageName]
+            val appName = try {
+                pm.getApplicationLabel(pm.getApplicationInfo(packageName, 0)).toString()
             } catch (e: PackageManager.NameNotFoundException) {
-                pkg
+                packageName
             }
             AppUsageRow(
-                packageName = pkg,
+                packageName = packageName,
                 appName = appName,
-                minutesUsed = minutesUsed,
-                effectiveLimitMinutes = policy?.dailyLimitMinutes,
+                minutesUsed = usageByPackage[packageName]?.minutesUsed ?: 0,
+                effectiveLimitMinutes = policy?.dailyLimitMinutes?.plus(grantedToday[packageName] ?: 0),
                 blocked = policy?.blocked ?: false
             )
         }
@@ -219,8 +220,10 @@ private fun AppUsageRowView(row: AppUsageRow, onRequestMoreTime: () -> Unit) {
             Text("Blocked by parent", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         } else if (row.effectiveLimitMinutes != null && row.effectiveLimitMinutes > 0) {
             Spacer(Modifier.height(6.dp))
+            val fraction = (row.minutesUsed.toFloat() / row.effectiveLimitMinutes.toFloat())
+                .coerceIn(0f, 1f)
             LinearProgressIndicator(
-                progress = (row.minutesUsed.toFloat() / row.effectiveLimitMinutes.toFloat()).coerceIn(0f, 1f),
+                progress = { fraction },
                 modifier = Modifier.fillMaxWidth()
             )
         }

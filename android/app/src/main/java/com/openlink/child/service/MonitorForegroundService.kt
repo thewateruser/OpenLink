@@ -9,32 +9,25 @@ import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
 import android.provider.Settings
+import android.util.Log
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import com.openlink.child.MainActivity
 import com.openlink.child.R
 import com.openlink.child.admin.ChildDeviceAdminReceiver
-import com.openlink.child.data.AppDatabase
-import com.openlink.child.data.UsageEntity
-import com.openlink.child.data.toEntity
+import com.openlink.child.domain.ChildRepository
+import com.openlink.child.domain.DeviceActions
 import com.openlink.child.enforcement.BlockReason
-import com.openlink.child.enforcement.EnforcementRepository
 import com.openlink.child.enforcement.OverlayController
 import com.openlink.child.enforcement.PolicyForegroundAccessibilityService
-import com.openlink.child.network.NetworkModule
-import com.openlink.child.network.OpenLinkApi
-import com.openlink.child.network.SocketManager
-import com.openlink.child.network.model.AppPolicyDto
-import com.openlink.child.network.model.LockUpdatePayload
-import com.openlink.child.network.model.PolicyUpdatePayload
-import com.openlink.child.network.model.ScheduleWindowDto
-import com.openlink.child.network.model.TimeRequestDto
-import com.openlink.child.network.model.UsageEntryDto
-import com.openlink.child.network.model.UsageHeartbeatRequest
-import com.openlink.child.prefs.SecurePrefs
+import com.openlink.child.server.DeviceInfo
+import com.openlink.child.server.EventBus
+import com.openlink.child.server.OpenLinkServer
+import com.openlink.child.server.ServerState
 import com.openlink.child.util.todayDateString
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -46,41 +39,46 @@ import kotlinx.coroutines.launch
 import java.util.Calendar
 
 /**
- * The foreground service required to keep enforcement running while the app isn't in the
- * foreground itself. It has four jobs, each its own loop/callback, all described in
- * docs/API.md's "Realtime" and enforcement sections:
- *  1. Poll UsageStatsManager every ~30s and tally today's per-app foreground minutes into Room.
- *  2. Push a usage heartbeat (POST /device/usage) roughly once a minute.
- *  3. Maintain a Socket.IO connection for live `policy:update` / `lock:update` /
- *     `request:decision`, applying each to Room + EnforcementRepository immediately.
- *  4. Fall back to polling GET /device/policies and GET /device/requests every ~30s whenever the
- *     socket is disconnected.
+ * The always-on half of the app. It has three jobs now, down from four:
+ *
+ *  1. Poll UsageStatsManager every ~30s and tally today's per-app foreground minutes into Room
+ *     (emitting `usage:update` for anything that moved).
+ *  2. Host the embedded TLS listener the parent app connects to, for exactly as long as
+ *     enforcement is running.
+ *  3. Broadcast `device:state` every ~60s, which doubles as the WebSocket keepalive and as the
+ *     refresh that lets a parent learn a newly-available overlay address.
+ *
+ * The fourth job -- pushing usage to a server and polling it back for policy -- is gone, along
+ * with the server. Nothing is uploaded and nothing is fetched; the data was always here.
  */
-class MonitorForegroundService : Service() {
+class MonitorForegroundService : Service(), DeviceActions {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    private lateinit var prefs: SecurePrefs
-    private lateinit var db: AppDatabase
-    private lateinit var api: OpenLinkApi
-    private val socketManager = SocketManager()
+    private lateinit var repository: ChildRepository
+    private var server: OpenLinkServer? = null
     private var lockFallbackOverlay: OverlayController? = null
+    private var wifiLock: WifiManager.WifiLock? = null
 
     override fun onCreate() {
         super.onCreate()
-        prefs = SecurePrefs(applicationContext)
-        db = AppDatabase.getInstance(applicationContext)
-        api = NetworkModule.buildRetrofit(applicationContext).create(OpenLinkApi::class.java)
+        repository = ChildRepository.getInstance(applicationContext)
+        repository.deviceActions = this
 
         startForegroundWithNotification()
-        scope.launch { EnforcementRepository.primeFromDatabase(applicationContext) }
+        acquireWifiLock()
 
-        wireSocketCallbacks()
-        connectSocketIfPossible()
+        scope.launch {
+            repository.primeEnforcement()
+            // A device that was locked when the process died stays locked: re-apply on start.
+            if (repository.isLocked()) applyLock(true)
+            repository.pruneOldData()
+        }
+
+        server = OpenLinkServer(applicationContext).also { it.start() }
 
         scope.launch { usagePollLoop() }
-        scope.launch { heartbeatLoop() }
-        scope.launch { pollingFallbackLoop() }
+        scope.launch { deviceStateLoop() }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -91,7 +89,10 @@ class MonitorForegroundService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
-        socketManager.disconnect()
+        server?.stop()
+        server = null
+        releaseWifiLock()
+        repository.deviceActions = null
         scope.cancel()
         super.onDestroy()
     }
@@ -129,45 +130,76 @@ class MonitorForegroundService : Service() {
         }
     }
 
+    // ---- Wi-Fi reachability -------------------------------------------------------------------
+
+    /**
+     * A foreground service keeps the process alive, but it does not keep the Wi-Fi radio
+     * responsive once the screen has been off for a while -- and an unreachable listener is a
+     * parent app that "randomly" cannot connect. The lock is held only while the service (and
+     * therefore the listener) is running.
+     */
+    private fun acquireWifiLock() {
+        try {
+            val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+                ?: return
+            // WIFI_MODE_FULL_HIGH_PERF is deprecated as of API 29, but it is still the mode that
+            // keeps an inbound socket answerable across the API 26+ range this app supports.
+            @Suppress("DEPRECATION")
+            val lock = wifiManager.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, WIFI_LOCK_TAG)
+            lock.setReferenceCounted(false)
+            lock.acquire()
+            wifiLock = lock
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not acquire a Wi-Fi lock: ${e.javaClass.simpleName}")
+        }
+    }
+
+    private fun releaseWifiLock() {
+        try {
+            wifiLock?.takeIf { it.isHeld }?.release()
+        } catch (e: Exception) {
+            // Already released.
+        }
+        wifiLock = null
+    }
+
     // ---- loops --------------------------------------------------------------------------------
 
     private suspend fun usagePollLoop() {
+        var ticksSincePrune = 0
         while (scope.isActive) {
             try {
                 pollUsageStatsOnce()
             } catch (e: Exception) {
                 // Best-effort; next tick retries.
             }
+            if (++ticksSincePrune >= TICKS_BETWEEN_PRUNES) {
+                ticksSincePrune = 0
+                try {
+                    repository.pruneOldData()
+                } catch (e: Exception) {
+                    // Retention is housekeeping; a failure here is not worth interrupting.
+                }
+            }
             delay(USAGE_POLL_INTERVAL_MS)
         }
     }
 
-    private suspend fun heartbeatLoop() {
+    /**
+     * `device:state` every ~60s. Cheap, and it carries the current endpoint list -- which is how
+     * a parent that is already connected picks up an address that only just became available
+     * (the overlay network coming up, a Wi-Fi network changing).
+     */
+    private suspend fun deviceStateLoop() {
         while (scope.isActive) {
-            delay(HEARTBEAT_INTERVAL_MS)
+            delay(DEVICE_STATE_INTERVAL_MS)
+            val port = server?.boundPort ?: continue
             try {
-                pushHeartbeat()
+                val endpoints = DeviceInfo.endpoints(port)
+                ServerState.onEndpointsChanged(endpoints)
+                EventBus.deviceState(DeviceInfo.batteryLevel(applicationContext), endpoints)
             } catch (e: Exception) {
-                // Offline: next tick retries. Today's usage stays correct locally regardless.
-            }
-        }
-    }
-
-    private suspend fun pollingFallbackLoop() {
-        while (scope.isActive) {
-            delay(FALLBACK_POLL_INTERVAL_MS)
-            if (!socketManager.isConnected()) {
-                connectSocketIfPossible() // retry the socket too, in case it's just reconnecting
-                try {
-                    refreshPoliciesFromServer()
-                } catch (e: Exception) {
-                    // offline; try again next tick
-                }
-                try {
-                    refreshRequestsFromServer()
-                } catch (e: Exception) {
-                    // offline; try again next tick
-                }
+                // Interface enumeration can fail transiently while the network reconfigures.
             }
         }
     }
@@ -187,7 +219,6 @@ class MonitorForegroundService : Service() {
 
         val stats = usageStatsManager.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, startOfDay, now)
             ?: return
-        val today = todayDateString()
         val tallies = mutableMapOf<String, Int>()
         for (usageStat in stats) {
             if (usageStat.packageName == packageName) continue // never count OpenLink itself
@@ -198,94 +229,18 @@ class MonitorForegroundService : Service() {
             tallies[usageStat.packageName] = maxOf(tallies[usageStat.packageName] ?: 0, minutes)
         }
 
-        val usageDao = db.usageDao()
-        tallies.forEach { (pkg, minutes) ->
-            usageDao.upsert(UsageEntity(packageName = pkg, date = today, minutesUsed = minutes))
-        }
-        EnforcementRepository.updateUsageToday(
-            usageDao.getForDateOnce(today).associate { it.packageName to it.minutesUsed }
-        )
-        PolicyForegroundAccessibilityService.instance?.recheckCurrentApp()
+        repository.recordUsage(tallies, todayDateString())
     }
 
-    private suspend fun pushHeartbeat() {
-        val today = todayDateString()
-        val usage = db.usageDao().getForDateOnce(today).map { UsageEntryDto(it.packageName, it.minutesUsed) }
-        if (usage.isEmpty()) return
-        api.postUsage(UsageHeartbeatRequest(date = today, usage = usage))
-    }
+    // ---- remote lock ----------------------------------------------------------------------------
 
-    // ---- socket / policy sync -------------------------------------------------------------------
+    /**
+     * [DeviceActions] implementation: the physical half of a lock. The state itself has already
+     * been persisted and broadcast by ChildRepository before this runs.
+     */
+    override fun applyLock(locked: Boolean) {
+        if (locked) lockDeviceNow()
 
-    private fun wireSocketCallbacks() {
-        socketManager.onPolicyUpdate = { raw ->
-            scope.launch {
-                try {
-                    val payload = NetworkModule.json.decodeFromString(PolicyUpdatePayload.serializer(), raw)
-                    applyPolicies(payload.policies, payload.schedule)
-                } catch (e: Exception) { /* malformed/unexpected payload; ignore this event */ }
-            }
-        }
-        socketManager.onLockUpdate = { raw ->
-            scope.launch {
-                try {
-                    val payload = NetworkModule.json.decodeFromString(LockUpdatePayload.serializer(), raw)
-                    applyLock(payload.isLocked)
-                } catch (e: Exception) { /* ignore */ }
-            }
-        }
-        socketManager.onRequestDecision = { raw ->
-            scope.launch {
-                try {
-                    val dto = NetworkModule.json.decodeFromString(TimeRequestDto.serializer(), raw)
-                    applyRequestDecision(dto)
-                } catch (e: Exception) { /* ignore */ }
-            }
-        }
-    }
-
-    private fun connectSocketIfPossible() {
-        val serverUrl = prefs.getServerUrl()
-        val token = prefs.getDeviceToken()
-        if (!serverUrl.isNullOrBlank() && !token.isNullOrBlank()) {
-            socketManager.connect(serverUrl, token)
-        }
-    }
-
-    private suspend fun refreshPoliciesFromServer() {
-        val response = api.getPolicies()
-        applyPolicies(response.policies, response.schedule)
-        applyLock(response.isLocked)
-    }
-
-    private suspend fun refreshRequestsFromServer() {
-        val requests = api.getRequests()
-        val requestDao = db.requestDao()
-        requests.forEach { requestDao.upsert(it.toEntity()) }
-
-        val today = todayDateString()
-        val grantedToday = requestDao.getApprovedGrantedForDate(today)
-            .groupBy { it.packageName }
-            .mapValues { (_, reqs) -> reqs.sumOf { it.grantedMinutes ?: 0 } }
-        EnforcementRepository.updateGrantedToday(grantedToday)
-        PolicyForegroundAccessibilityService.instance?.recheckCurrentApp()
-    }
-
-    private suspend fun applyPolicies(policies: List<AppPolicyDto>, schedule: List<ScheduleWindowDto>) {
-        val policyDao = db.policyDao()
-        val scheduleDao = db.scheduleDao()
-        policyDao.replaceAll(policies.map { it.toEntity() })
-        scheduleDao.replaceAll(schedule.map { it.toEntity() })
-        EnforcementRepository.updatePolicies(policyDao.getAllOnce())
-        EnforcementRepository.updateSchedule(scheduleDao.getAllOnce())
-        PolicyForegroundAccessibilityService.instance?.recheckCurrentApp()
-    }
-
-    private fun applyLock(locked: Boolean) {
-        EnforcementRepository.updateLocked(locked)
-        if (locked) {
-            lockDeviceNow()
-        }
         val accessibilityServiceRunning = PolicyForegroundAccessibilityService.instance != null
         when {
             accessibilityServiceRunning -> PolicyForegroundAccessibilityService.instance?.recheckCurrentApp()
@@ -293,17 +248,6 @@ class MonitorForegroundService : Service() {
             else -> lockFallbackOverlay?.hide()
         }
     }
-
-    private suspend fun applyRequestDecision(dto: TimeRequestDto) {
-        db.requestDao().upsert(dto.toEntity())
-        if (dto.status == "approved" && (dto.grantedMinutes ?: 0) > 0) {
-            // Unblocks immediately, without waiting for the next heartbeat/poll round trip.
-            EnforcementRepository.bumpGrantedToday(dto.packageName, dto.grantedMinutes ?: 0)
-        }
-        PolicyForegroundAccessibilityService.instance?.recheckCurrentApp()
-    }
-
-    // ---- remote lock ----------------------------------------------------------------------------
 
     private fun lockDeviceNow() {
         try {
@@ -331,10 +275,13 @@ class MonitorForegroundService : Service() {
     }
 
     companion object {
+        private const val TAG = "MonitorService"
         private const val NOTIFICATION_ID = 42
+        private const val WIFI_LOCK_TAG = "openlink:listener"
         private const val USAGE_POLL_INTERVAL_MS = 30_000L
-        private const val HEARTBEAT_INTERVAL_MS = 60_000L
-        private const val FALLBACK_POLL_INTERVAL_MS = 30_000L
+        private const val DEVICE_STATE_INTERVAL_MS = 60_000L
+        /** ~30 minutes at the current poll interval. */
+        private const val TICKS_BETWEEN_PRUNES = 60
 
         fun start(context: Context) {
             val intent = Intent(context, MonitorForegroundService::class.java)
@@ -343,6 +290,10 @@ class MonitorForegroundService : Service() {
             } else {
                 context.startService(intent)
             }
+        }
+
+        fun stop(context: Context) {
+            context.stopService(Intent(context, MonitorForegroundService::class.java))
         }
     }
 }

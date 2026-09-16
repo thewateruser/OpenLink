@@ -10,12 +10,13 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface ScheduleDao {
 
-    @Query("SELECT * FROM schedule_windows")
+    @Query("SELECT * FROM schedule_windows ORDER BY startMinute")
     suspend fun getAllOnce(): List<ScheduleEntity>
 
-    @Query("SELECT * FROM schedule_windows")
+    @Query("SELECT * FROM schedule_windows ORDER BY startMinute")
     fun observeAll(): Flow<List<ScheduleEntity>>
 
+    /** `PUT /schedule` replaces the whole set, so this stays a wholesale swap. */
     @Transaction
     suspend fun replaceAll(windows: List<ScheduleEntity>) {
         clear()

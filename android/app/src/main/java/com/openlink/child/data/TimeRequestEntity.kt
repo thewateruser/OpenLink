@@ -4,20 +4,28 @@ import androidx.room.Entity
 import androidx.room.PrimaryKey
 
 /**
- * Local cache of a `TimeRequest`, keyed by the server-assigned id. Used both to show
- * pending/approved/denied status in the UI, and to compute today's approved extra minutes for
- * enforcement (see EnforcementRepository.primeFromDatabase).
+ * A "can I have more time" request.
+ *
+ * The id is now minted on this device (a UUID) rather than assigned by a server, and the row is
+ * created the moment the child taps send -- there is nowhere for it to fail to reach. It sits
+ * here with `status = "pending"` until a parent connects and approves or denies it, which is
+ * exactly the queueing behaviour docs/PROTOCOL.md describes for a disconnected device.
  */
 @Entity(tableName = "time_requests")
 data class TimeRequestEntity(
     @PrimaryKey val id: String,
     val packageName: String,
+    /** Label captured at request time, so the parent sees a name even for an app it can't resolve. */
+    val appName: String?,
     val minutesRequested: Int,
     val message: String?,
     /** "pending" | "approved" | "denied" */
     val status: String,
     val grantedMinutes: Int?,
-    /** ISO-8601 UTC, set by the server once approved/denied. */
-    val respondedAt: String?,
-    val createdAt: String?
+    /** Free-text note from the parent when denying (or approving). */
+    val responseNote: String?,
+    /** ISO-8601 UTC. */
+    val createdAt: String,
+    /** ISO-8601 UTC, set when a parent responds. */
+    val respondedAt: String?
 )

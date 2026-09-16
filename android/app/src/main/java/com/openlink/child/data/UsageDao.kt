@@ -17,4 +17,11 @@ interface UsageDao {
 
     @Query("SELECT * FROM usage WHERE date = :date")
     fun observeForDate(date: String): Flow<List<UsageEntity>>
+
+    /**
+     * 30-day local retention, per docs/PROTOCOL.md. Dates are "YYYY-MM-DD", so a lexicographic
+     * comparison is also a chronological one.
+     */
+    @Query("DELETE FROM usage WHERE date < :oldestDateToKeep")
+    suspend fun deleteOlderThan(oldestDateToKeep: String)
 }

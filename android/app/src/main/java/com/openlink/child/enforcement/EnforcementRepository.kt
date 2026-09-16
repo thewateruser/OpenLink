@@ -51,9 +51,10 @@ object EnforcementRepository {
         grantedToday = granted
     }
 
-    /** Applies an approved time-request grant immediately, without waiting for the next poll or
-     *  a full Room reload -- this is what lets "ask for more time" unblock the app as soon as
-     *  `request:decision` arrives over the socket. */
+    /** Applies an approved time-request grant immediately, without waiting for a full Room
+     *  reload. Since the approval is handled in this same process (`POST /requests/{id}/approve`
+     *  lands here directly), the blocked app becomes usable the instant the parent taps approve
+     *  -- there is no round trip left to wait for. */
     fun bumpGrantedToday(packageName: String, extraMinutes: Int) {
         val updated = grantedToday.toMutableMap()
         updated[packageName] = (updated[packageName] ?: 0) + extraMinutes

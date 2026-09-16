@@ -3,10 +3,11 @@ package com.openlink.child.data
 import androidx.room.Entity
 
 /**
- * Today's (or any past day's) per-app foreground minutes, as tallied locally by
- * MonitorForegroundService from UsageStatsManager. Per docs/API.md: "the device is the source
- * of truth for today's usage" -- this table is that source of truth, and it's what gets pushed
- * via POST /device/usage.
+ * Per-app foreground minutes for one local calendar day, tallied by MonitorForegroundService
+ * from UsageStatsManager.
+ *
+ * This table is the only record of usage that exists anywhere -- it is served directly by
+ * `GET /usage` and retained for 30 days. Nothing is uploaded.
  */
 @Entity(tableName = "usage", primaryKeys = ["packageName", "date"])
 data class UsageEntity(

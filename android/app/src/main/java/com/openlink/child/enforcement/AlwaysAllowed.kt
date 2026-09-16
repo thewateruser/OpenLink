@@ -6,7 +6,7 @@ import android.content.pm.PackageManager
 import android.telecom.TelecomManager
 
 /**
- * Per docs/API.md rule 3: during a downtime `ScheduleWindow`, "all apps are blocked except the
+ * Rule 3 (see EnforcementEngine): during a downtime `ScheduleWindow`, all apps are blocked except the
  * OpenLink app itself and a short allow-list (Phone, Settings, the default launcher)". This
  * allow-list also gates the `isLocked` overlay indirectly: [EnforcementEngine.evaluate] checks
  * `isLocked` before `alwaysAllowed`, so a remote lock still blocks everything including these

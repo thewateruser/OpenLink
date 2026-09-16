@@ -4,7 +4,21 @@ import com.openlink.child.data.PolicyEntity
 import com.openlink.child.data.ScheduleEntity
 import java.util.Calendar
 
-/** Client-side implementation of the "Enforcement semantics" section of docs/API.md. */
+/**
+ * The enforcement rules, in one place.
+ *
+ * These used to be specified in docs/API.md, which went away with the server. docs/PROTOCOL.md
+ * deliberately covers only the wire contract between the two apps, so THIS FILE is now the
+ * specification of record for how policies combine -- see android/README.md, which flags that as
+ * a documentation gap worth closing.
+ *
+ * The four rules, in precedence order:
+ *  1. effective daily limit = policy limit + minutes granted by approved requests today
+ *     (a null limit stays null: unlimited),
+ *  2. a hard block wins over any limit,
+ *  3. a downtime window blocks everything except the always-allowed list,
+ *  4. an active remote lock wins over everything, including the always-allowed list.
+ */
 sealed class EnforcementDecision {
     object Allowed : EnforcementDecision()
     data class Blocked(val reason: BlockReason) : EnforcementDecision()
@@ -20,13 +34,13 @@ data class AppEnforcementState(
     val grantedExtraMinutes: Int,
     val minutesUsedToday: Int
 ) {
-    /** docs/API.md rule 1. Null stays null (unlimited) regardless of any grant. */
+    /** Rule 1. Null stays null (unlimited) regardless of any grant. */
     val effectiveLimitMinutes: Int? = baseLimitMinutes?.plus(grantedExtraMinutes)
 }
 
 object EnforcementEngine {
 
-    /** docs/API.md: `ScheduleWindow.daysOfWeek` bitmask, bit0 = Sunday. */
+    /** `ScheduleWindow.daysOfWeek` bitmask, bit0 = Sunday, per docs/PROTOCOL.md. */
     fun isWithinDowntime(schedule: List<ScheduleEntity>, now: Calendar = Calendar.getInstance()): Boolean {
         val dayBit = dayOfWeekBit(now)
         val minuteOfDay = now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE)
@@ -47,7 +61,7 @@ object EnforcementEngine {
     }
 
     /**
-     * Evaluates docs/API.md rules 1-4 in the documented precedence: an active remote lock wins
+     * Evaluates rules 1-4 in the precedence documented above: an active remote lock wins
      * outright (rule 4), then the always-allowed list is exempt from everything *except* that
      * lock, then a hard block (rule 2), then downtime (rule 3), then the per-app minute limit
      * (rule 1).

@@ -19,8 +19,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 
-/** Item 4 of the spec: "ask for more time", reachable from both the block overlay and the home
- *  screen. Calling code is responsible for the actual `POST /device/requests` call. */
+/**
+ * "Ask for more time", reachable from both the block overlay and the home screen.
+ *
+ * Calling code is responsible for persisting the request (ChildRepository.createRequest), which
+ * writes it to the local database and announces it to any connected parent. There is no network
+ * call to fail: an unanswered request simply waits.
+ */
 @Composable
 fun RequestTimeDialog(
     packageName: String,

@@ -49,10 +49,15 @@ private data class PermissionItem(
 )
 
 /**
- * Walks the user through every special/runtime permission this app needs, per item 3-6 of the
- * spec: usage access, the accessibility service, device admin, "display over other apps", and
- * (Android 13+) notifications. Statuses are re-checked whenever the screen resumes, since all of
- * these are granted in a separate Settings screen the user backs out of.
+ * Walks the user through every special/runtime permission this app needs: usage access, the
+ * accessibility service, device admin, "display over other apps", and (Android 13+)
+ * notifications. Statuses are re-checked whenever the screen resumes, since all of these are
+ * granted in a separate Settings screen the user backs out of.
+ *
+ * Unchanged by the move to a serverless architecture -- these permissions are about enforcing on
+ * this device, which is the half of the app that never depended on a server. The one difference
+ * is what happens after: continuing now starts the foreground service *and* the listener a
+ * parent will connect to, which is why pairing comes after this screen rather than before it.
  */
 @Composable
 fun PermissionsScreen(onAllGrantedContinue: () -> Unit) {

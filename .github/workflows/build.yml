@@ -1,0 +1,83 @@
+# Builds both apps on every push.
+#
+# This exists because neither app can be built in most development sandboxes:
+# the Android SDK and the Android Gradle Plugin are only distributed from
+# dl.google.com, and iOS builds require Xcode, which is macOS-only. GitHub's
+# runners have both, so CI is the first place this code actually meets a
+# compiler.
+#
+# The Android job produces an installable debug APK as a downloadable
+# artifact. The iOS job compiles for the simulator, which needs no signing —
+# a distributable IPA additionally requires an Apple Developer Program
+# membership and a provisioning profile (see ios/README.md).
+
+name: Build
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  android:
+    name: Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('android/**/*.gradle.kts', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-
+
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: openlink-child-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+  ios:
+    name: iOS (compile check)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: ios
+        run: xcodegen generate
+
+      # Simulator builds need no code signing, so this verifies the Swift
+      # actually compiles without requiring any Apple account or certificate.
+      - name: Build for simulator
+        working-directory: ios
+        run: |
+          xcodebuild build \
+            -project OpenLink.xcodeproj \
+            -scheme OpenLink \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO

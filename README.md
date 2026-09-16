@@ -83,14 +83,40 @@ android/           Kotlin/Compose app for the managed device — and the host
 ios/               SwiftUI app for the parent (XcodeGen project)
 ```
 
+## Requirements
+
+| | Minimum | Built against |
+|---|---|---|
+| **Android** (child device) | **8.0 Oreo, API 26** | API 34 |
+| **iOS** (parent app) | **iOS 16.0** — iPhone 8 and later, plus iPad | iOS 16 SDK |
+
+The Android floor is a hard one: the blocking overlay uses
+`TYPE_APPLICATION_OVERLAY` and the foreground service needs
+`NotificationChannel`, both introduced in API 26. It covers the large
+majority of Android devices still in use.
+
+The iOS floor is softer — it comes from SwiftUI's `NavigationStack`, not
+from anything structural. Everything security-related (CryptoKit,
+`URLSessionWebSocketTask`, `NWBrowser`) works on iOS 13+, and
+`SecTrustCopyCertificateChain` on iOS 15+, so dropping to iOS 15 is a
+navigation refactor if you need older devices.
+
 ## Building
 
-**Android:** open `android/` in Android Studio, let Gradle sync, run.
-minSdk 26, compileSdk 34. See [`android/README.md`](android/README.md).
+**Android:** open `android/` in Android Studio (Ladybug 2024.2+), or run
+`cd android && ./gradlew assembleDebug`. Needs JDK 17. A debug APK requires
+no signing setup or Play account.
 
-**iOS:** `cd ios && xcodegen generate && open OpenLink.xcodeproj`. Requires
-Xcode 15+ and [XcodeGen](https://github.com/yonaskolb/XcodeGen). No third-party
-Swift packages. See [`ios/README.md`](ios/README.md).
+**iOS:** `cd ios && xcodegen generate && open OpenLink.xcodeproj`. Needs
+Xcode 15+, macOS, and [XcodeGen](https://github.com/yonaskolb/XcodeGen)
+(`brew install xcodegen`). No third-party Swift packages. Installing on a
+physical iPhone additionally requires an Apple Developer account for
+signing — a free account works for a 7-day build, a paid one for a year.
+
+**CI:** [`.github/workflows/build.yml`](.github/workflows/build.yml) builds
+the Android APK on every push and uploads it as a downloadable artifact, and
+compile-checks the iOS app against the simulator SDK (which needs no
+signing). That's the quickest way to get a build without a local toolchain.
 
 Then open the Android app, grant the permissions it asks for, show the
 pairing QR, and scan it with the iOS app.

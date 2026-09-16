@@ -18,11 +18,16 @@ queues locally until a parent opens their app.
 
 1. Open the `android/` folder (not the repo root) in Android Studio (Ladybug/2024.2 or newer, for
    AGP 8.7 / Kotlin 2.1 support).
-2. Let Gradle sync. `gradle/wrapper/gradle-wrapper.properties` points at Gradle 8.9; Android
-   Studio downloads it automatically. The wrapper `.jar` binary itself is **not** committed — if
-   `./gradlew` doesn't work from a plain terminal, run `gradle wrapper` once with a local Gradle
-   install, or let Android Studio's bundled Gradle handle the build.
+2. Let Gradle sync. The wrapper is committed, so `./gradlew assembleDebug` also works from a
+   plain terminal — it fetches Gradle 8.9 on first run.
 3. Build variant: `debug`. `minSdk 26` (Android 8.0), `targetSdk`/`compileSdk 34`.
+
+A debug APK needs no Play Store account or signing setup: Gradle generates a debug keystore
+automatically. The output lands at `app/build/outputs/apk/debug/app-debug.apk`, installable with
+`adb install`, or by copying it to the phone and allowing install from unknown sources.
+
+`.github/workflows/build.yml` builds this APK on every push and attaches it as a downloadable
+artifact, which is the easiest way to get a build without a local Android SDK.
 
 ### Why Kotlin 2.1 and Ktor 3.2
 

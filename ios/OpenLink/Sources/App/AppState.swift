@@ -17,7 +17,14 @@ final class AppState: ObservableObject {
 
     private var cancellables = Set<AnyCancellable>()
 
-    init(registry: DeviceRegistry = DeviceRegistry(), bonjour: BonjourBrowser = BonjourBrowser()) {
+    /// Both dependencies default to `nil` rather than to `DeviceRegistry()` /
+    /// `BonjourBrowser()`. A default argument expression is evaluated in a
+    /// *nonisolated* context at the call site, so it cannot construct these
+    /// `@MainActor` types; the initializer body can, because it inherits this
+    /// class's isolation. Injecting them explicitly still works for tests.
+    init(registry: DeviceRegistry? = nil, bonjour: BonjourBrowser? = nil) {
+        let registry = registry ?? DeviceRegistry()
+        let bonjour = bonjour ?? BonjourBrowser()
         self.registry = registry
         self.bonjour = bonjour
 

@@ -32,8 +32,19 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      # The ubuntu runner already ships an Android SDK with ANDROID_HOME set,
+      # so there's nothing to install. android-actions/setup-android is
+      # deliberately not used: it tries to install the long-obsolete `tools`
+      # package, which no longer exists in the repository, and fails.
+      # Licenses still need accepting so AGP may fetch any missing component.
+      - name: Accept Android SDK licences
+        run: |
+          # The cmdline-tools directory is versioned (e.g. `latest`, `16.0`),
+          # and which one the image ships changes over time — find it rather
+          # than hardcoding.
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | head -n 1)
+          echo "Using $SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
 
       - name: Cache Gradle
         uses: actions/cache@v4

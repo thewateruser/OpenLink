@@ -38,9 +38,20 @@ class ParentRegistry(context: Context) {
         return token
     }
 
-    fun revoke(parentId: String): Boolean = prefs.removeParent(parentId)
+    fun revoke(parentId: String): Boolean {
+        val removed = prefs.removeParent(parentId)
+        if (removed) bumpRevocationEpoch()
+        return removed
+    }
 
-    fun revokeAll() = prefs.clearParents()
+    fun revokeAll() {
+        prefs.clearParents()
+        bumpRevocationEpoch()
+    }
+
+    /** Whether this parent is still paired. Used to evict a revoked parent's live WebSocket. */
+    fun isStillPaired(parentId: String): Boolean =
+        prefs.parents().any { it.parentId == parentId }
 
     /**
      * Resolves a presented bearer token to the parent that holds it, or null.
@@ -63,8 +74,27 @@ class ParentRegistry(context: Context) {
         return matched
     }
 
-    private companion object {
-        const val TOKEN_BYTES = 32
+    companion object {
+        /**
+         * Bumped whenever any parent is revoked, from the API or from the child's own settings
+         * screen.
+         *
+         * Bearer auth is checked once per HTTP request, but a WebSocket is authenticated only at
+         * the handshake -- so without this, a revoked parent would keep receiving live events for
+         * as long as it held the socket open. The `/events` handler watches this counter and
+         * re-checks its own membership when it moves, which costs nothing while nothing changes.
+         */
+        @Volatile
+        private var revocationEpoch: Int = 0
+
+        fun currentRevocationEpoch(): Int = revocationEpoch
+
+        @Synchronized
+        private fun bumpRevocationEpoch() {
+            revocationEpoch++
+        }
+
+        private const val TOKEN_BYTES = 32
 
         // 32 bytes of base64url without padding is exactly 43 characters. The bounds are a
         // cheap guard against a caller shipping a megabyte-long "token" through SHA-256 on

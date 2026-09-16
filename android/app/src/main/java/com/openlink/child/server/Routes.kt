@@ -272,8 +272,23 @@ fun Application.openLinkModule(deps: ServerDependencies) {
             }
 
             ServerState.onParentConnected()
+
+            // A bearer token is checked once, at the handshake. Without the epoch check below, a
+            // parent revoked mid-session would keep receiving live events for as long as it held
+            // this socket open -- which is precisely the situation someone hits the revoke button
+            // to end.
+            var knownEpoch = ParentRegistry.currentRevocationEpoch()
+
             val sender = launch {
                 EventBus.events.collect { outbound ->
+                    val epoch = ParentRegistry.currentRevocationEpoch()
+                    if (epoch != knownEpoch) {
+                        knownEpoch = epoch
+                        if (!deps.registry.isStillPaired(parent.parentId)) {
+                            close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "revoked"))
+                            return@collect
+                        }
+                    }
                     // `policy:update` is scoped to changes made by *another* parent.
                     if (outbound.exceptParentId == parent.parentId) return@collect
                     send(

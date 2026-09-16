@@ -13,6 +13,10 @@ import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.ApplicationCallPipeline
+// Needed by the intercept() gate below: inside a route handler `call` is a
+// member of Ktor 3's RoutingContext, but inside a pipeline interceptor it is
+// an extension on PipelineContext and so has to be imported.
+import io.ktor.server.application.call
 import io.ktor.server.application.install
 import io.ktor.server.plugins.BadRequestException
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation

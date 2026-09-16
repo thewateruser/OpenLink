@@ -20,10 +20,23 @@ struct RequestsListView: View {
     @State private var errorMessage: String?
 
     /// A request plus the device it belongs to.
+    ///
+    /// `deviceId` is copied in rather than read back off `session`, because
+    /// `Identifiable.id` is nonisolated and `DeviceSession` is `@MainActor` —
+    /// the getter cannot touch the session. Construction always happens in the
+    /// view body, which is main-actor isolated, so copying it is free.
     private struct Item: Identifiable {
         let session: DeviceSession
+        let deviceId: String
         let request: TimeRequest
-        var id: String { "\(session.deviceId)/\(request.id)" }
+        var id: String { "\(deviceId)/\(request.id)" }
+
+        @MainActor
+        init(session: DeviceSession, request: TimeRequest) {
+            self.session = session
+            self.deviceId = session.deviceId
+            self.request = request
+        }
     }
 
     private enum ActiveSheet: Identifiable {

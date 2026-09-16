@@ -292,8 +292,10 @@ struct ScheduleWindow: Codable, Identifiable, Equatable {
     /// whichever form it arrived.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        // `try?` on a throwing call returning `Int64?` flattens to `Int64?`, so
+        // `numericId` is already unwrapped here.
         if let numericId = try? container.decodeIfPresent(Int64.self, forKey: .remoteId) {
-            remoteId = numericId.map(String.init)
+            remoteId = String(numericId)
         } else {
             remoteId = try container.decodeIfPresent(String.self, forKey: .remoteId)
         }

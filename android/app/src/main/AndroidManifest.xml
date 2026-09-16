@@ -3,7 +3,7 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Networking. This app is a *server*: INTERNET is needed to bind and accept, not to dial
-         out -- nothing outbound is ever contacted. -->
+         out; nothing outbound is ever contacted. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
@@ -13,7 +13,7 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <!-- Per-app usage tracking. Access is actually granted via the special
-         Settings.ACTION_USAGE_ACCESS_SETTINGS screen (AppOps), not a runtime dialog -- see
+         Settings.ACTION_USAGE_ACCESS_SETTINGS screen (AppOps), not a runtime dialog; see
          ui/permissions/PermissionsScreen.kt. -->
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />

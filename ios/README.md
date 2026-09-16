@@ -15,16 +15,17 @@ the WebSocket events, and endpoint learning.
 
 ## Honest status
 
-**Nothing in this directory has been compiled or run.** This container has no
-macOS/Xcode/Swift toolchain, so there was no way to build, typecheck or launch
-the app while writing it. Treat it as a careful, complete implementation
-attempt — written to be idiomatic and internally consistent, and manually
-cross-checked for type/method agreement — not as verified-working code.
-Before relying on it:
+**This compiles, and it has never been run.** CI (`.github/workflows/build.yml`)
+runs `xcodegen generate` and builds the app against the simulator SDK on every
+push, and that is green — so the Swift is type-correct against a current Xcode.
+It has never been launched, on a simulator or a device. Nothing below the type
+system is verified: the pairing handshake, certificate pinning against a real
+self-signed cert, Bonjour discovery, the WebSocket and endpoint failover have
+all only ever been *compiled*. Before relying on it:
 
-- Run `xcodegen generate`, open the project in Xcode, and fix whatever the
-  compiler flags. There are no third-party packages to resolve any more, so
-  anything that breaks is in this source tree.
+- Run `xcodegen generate` and open the project in Xcode. There are no
+  third-party packages to resolve, so anything that breaks is in this source
+  tree.
 - Pair against a real child device and click through: scan → pair → device
   detail → policy → schedule → requests → lock, once at home on Wi-Fi and
   once away from home over the overlay network.

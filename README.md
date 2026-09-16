@@ -126,11 +126,14 @@ pairing QR, and scan it with the iOS app.
 Built as a functional MVP, not a security-audited, store-ready product.
 Being straight about where things stand:
 
-- **Neither app has been compiled.** They were written in an environment
-  with no Android SDK and no macOS/Xcode toolchain. Both were written
-  carefully and cross-checked for internal consistency, but expect to fix
-  real issues on first build. Each app's README says the same thing in
-  more detail.
+- **Both apps compile, and neither has ever been run.** CI builds the
+  Android debug APK and compile-checks the iOS app against the simulator
+  SDK on every push, and both are green — so the code is type-correct and
+  the APK is a real, installable artifact. But compiling is a long way
+  from working: no part of this has been exercised on a physical device.
+  Pairing, the TLS handshake, the blocking overlay, remote lock and the
+  Keystore-backed certificate are all unverified at runtime. Expect to
+  find genuine bugs the moment you try it.
 - **The security model is sound on paper but unreviewed in practice.** The
   QR-delivered certificate fingerprint gives genuine out-of-band
   authentication and defeats MITM, tokens are compared in constant time,

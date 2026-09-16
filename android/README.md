@@ -160,22 +160,25 @@ traffic at all now, and what this app *hosts* is TLS-only.
 
 ## Known gaps / what a production app would still need
 
-- **Not compiled.** There is no Android SDK in the environment this was written in, so nothing
-  here has been through `./gradlew assembleDebug` or the Kotlin compiler. Every file was written
-  and re-read for syntax, imports and API correctness, and internal consistency (class names,
-  signatures, package structure) was cross-checked with `grep` — but expect to fix real issues on
-  first build. The likeliest places, in order:
-  1. **Ktor's exact API surface.** `sslConnector` moved from the environment builder into the
-     engine `configure` block in Ktor 3, and `Application.intercept` is deprecated-but-present.
-     Both are used here. If either has moved again, the fix is small and local to
-     `server/OpenLinkServer.kt` / `server/Routes.kt`.
-  2. **AndroidKeyStore + JSSE.** Ktor's `sslConnector` takes a `java.security.KeyStore` and pulls
-     the key via `KeyManagerFactory.init(keyStore, password)`. Conscrypt handles opaque
-     AndroidKeyStore keys there, and the empty passphrase is the conventional spelling for a
-     keystore that has none — but this is the single most likely thing to need a
-     hand-rolled `X509KeyManager` instead. That change would be contained to `TlsIdentity` plus
-     the connector call.
-  3. Compose/Material 3 API drift on a BOM this old.
+- **It compiles; it has never been run.** CI (`.github/workflows/build.yml`) runs
+  `./gradlew assembleDebug` on every push and publishes the APK as an artifact, so the Kotlin is
+  type-correct and the APK is real and installable. It has never been on a device or emulator.
+  Everything below the type system is unverified: the TLS handshake, pairing, the overlay,
+  `lockNow()`, NSD advertisement and the Room queries have all only been *compiled*.
+
+  Two of the three breakages predicted here before the first build did happen, and are fixed:
+  Ktor's `call` is an extension on `PipelineContext` inside `intercept` (it needed an import,
+  the API itself is unchanged in 3.2.3), and `Modifier.weight` must come from the
+  `Row`/`Column` scope rather than a top-level import. The third is untouched by compiling and
+  is now the biggest open risk:
+
+  - **AndroidKeyStore + JSSE.** Ktor's `sslConnector` takes a `java.security.KeyStore` and pulls
+    the key via `KeyManagerFactory.init(keyStore, password)`. Conscrypt is expected to handle
+    opaque AndroidKeyStore keys there, and the empty passphrase is the conventional spelling for
+    a keystore that has none — but this is a *runtime* binding that compiles regardless of
+    whether it works. If it fails, it fails when the listener starts, and the fix is a
+    hand-rolled `X509KeyManager`, contained to `TlsIdentity` plus the connector call. This is the
+    first thing to try on a real device.
 - **The TLS certificate has no subjectAltName.** AndroidKeyStore's auto-generated certificate
   can't have one, because the addresses the device will be dialled on aren't known when the key is
   generated. **The iOS app must therefore disable hostname verification and validate purely by

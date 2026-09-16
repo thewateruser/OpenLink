@@ -1,0 +1,106 @@
+// OpenLink data model.
+// SQLite by default (zero-config, fine for a single-household self-hosted
+// deployment). Swap the datasource to postgresql for multi-tenant hosting.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Family {
+  id           String        @id @default(cuid())
+  name         String
+  createdAt    DateTime      @default(now())
+  parents      ParentUser[]
+  devices      ChildDevice[]
+  pairingCodes PairingCode[]
+}
+
+model ParentUser {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  familyId     String
+  family       Family   @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  createdAt    DateTime @default(now())
+}
+
+model PairingCode {
+  id        String    @id @default(cuid())
+  code      String    @unique
+  familyId  String
+  family    Family    @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  claimedAt DateTime?
+  createdAt DateTime  @default(now())
+}
+
+model ChildDevice {
+  id              String           @id @default(cuid())
+  name            String
+  platform        String           @default("android")
+  deviceTokenHash String           @unique
+  timezone        String           @default("UTC")
+  isLocked        Boolean          @default(false)
+  lastSeenAt      DateTime?
+  familyId        String
+  family          Family           @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  createdAt       DateTime         @default(now())
+  policies        AppPolicy[]
+  scheduleWindows ScheduleWindow[]
+  usageRecords    UsageRecord[]
+  timeRequests    TimeRequest[]
+}
+
+model AppPolicy {
+  id                String      @id @default(cuid())
+  deviceId          String
+  device            ChildDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  packageName       String
+  appName           String?
+  dailyLimitMinutes Int?
+  blocked           Boolean     @default(false)
+  updatedAt         DateTime    @updatedAt
+
+  @@unique([deviceId, packageName])
+}
+
+model ScheduleWindow {
+  id          String      @id @default(cuid())
+  deviceId    String
+  device      ChildDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  daysOfWeek  Int
+  startMinute Int
+  endMinute   Int
+  label       String?
+}
+
+model UsageRecord {
+  id          String      @id @default(cuid())
+  deviceId    String
+  device      ChildDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  packageName String
+  date        String
+  minutesUsed Int         @default(0)
+  updatedAt   DateTime    @updatedAt
+
+  @@unique([deviceId, packageName, date])
+}
+
+model TimeRequest {
+  id               String      @id @default(cuid())
+  deviceId         String
+  device           ChildDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  packageName      String
+  minutesRequested Int
+  message          String?
+  status           String      @default("pending") // pending | approved | denied
+  grantedMinutes   Int?
+  responseNote     String?
+  respondedAt      DateTime?
+  createdAt        DateTime    @default(now())
+}

@@ -169,6 +169,14 @@ jobs:
           Transfer the APK to the phone and open it, allowing installation from
           unknown sources, or `adb install OpenLink-child-*.apk`.
 
+          **No device-administrator privilege is requested.** OpenLink never asks
+          to become a Device Admin, so there is no alarming system grant and the
+          app uninstalls like any other. That is also why there is no remote-lock
+          feature: `lockNow()` requires that privilege and it isn't worth the
+          cost. It doesn't ask for "display over other apps" either — the
+          accessibility binding grants the blocking overlay implicitly. Time
+          limits, hard blocks and downtime all work without any of it.
+
           This is a **debug build**, signed with Gradle's automatically generated
           debug key. It installs fine, but it is not a production release build:
           the debug key is not yours, so a future properly-signed build will not
@@ -193,18 +201,31 @@ jobs:
 
           Both apps compile, and **neither has ever been run**. Every failure CI
           can catch is fixed; nothing below the type system is verified. Pairing,
-          the TLS handshake, the blocking overlay, remote lock and the
-          Keystore-backed certificate have only ever been compiled. Expect real
-          bugs, and do not rely on this to actually restrict a device yet.
+          the TLS handshake, the blocking overlay and the Keystore-backed
+          certificate have only ever been compiled. Expect real bugs, and do not
+          rely on this to actually restrict a device yet.
 
           See [`docs/PROTOCOL.md`](docs/PROTOCOL.md) for the protocol and security
           model, and the per-app READMEs for known gaps.
           EOF
 
-          gh release create "${{ needs.version.outputs.name }}" \
-            --repo "${{ github.repository }}" \
-            --title "OpenLink ${{ needs.version.outputs.name }}" \
-            --notes-file notes.md \
-            --target "${{ github.sha }}" \
-            $([ "${{ needs.version.outputs.prerelease }}" = "true" ] && echo "--prerelease") \
-            dist/*
+          TAG="${{ needs.version.outputs.name }}"
+          REPO="${{ github.repository }}"
+
+          # Re-runnable: creating an existing release fails, so fall back to
+          # updating it in place. Lets a release be corrected (notes, rebuilt
+          # assets) without deleting and recreating the tag.
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            echo "Release $TAG exists — updating it."
+            gh release edit "$TAG" --repo "$REPO" \
+              --title "OpenLink $TAG" \
+              --notes-file notes.md
+            gh release upload "$TAG" --repo "$REPO" --clobber dist/*
+          else
+            gh release create "$TAG" --repo "$REPO" \
+              --title "OpenLink $TAG" \
+              --notes-file notes.md \
+              --target "${{ github.sha }}" \
+              $([ "${{ needs.version.outputs.prerelease }}" = "true" ] && echo "--prerelease") \
+              dist/*
+          fi

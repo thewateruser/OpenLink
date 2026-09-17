@@ -27,8 +27,8 @@ all only ever been *compiled*. Before relying on it:
   third-party packages to resolve, so anything that breaks is in this source
   tree.
 - Pair against a real child device and click through: scan → pair → device
-  detail → policy → schedule → requests → lock, once at home on Wi-Fi and
-  once away from home over the overlay network.
+  detail → policy → schedule → requests, once at home on Wi-Fi and once away
+  from home over the overlay network.
 - Deliberately test the **failure** path for pinning: point the app at a
   device presenting a different certificate and confirm it refuses to
   connect rather than falling back to anything.
@@ -110,10 +110,10 @@ There is no entitlements file any more.
 6. **WebSocket** (`Networking/EventSocket.swift`) — `URLSessionWebSocketTask`
    against `/events` on the same pinned session with the bearer token in the
    `Authorization` header, handling `request:new`, `usage:update`,
-   `lock:update`, `policy:update` and `device:state`, with backoff reconnect
+   `policy:update` and `device:state`, with backoff reconnect
    and a 25s keepalive ping. REST polling every 30s whenever it isn't
    connected — nothing depends on the socket being up.
-7. **Management UI** — devices list with lock toggles, device detail with
+7. **Management UI** — devices list, device detail with
    per-app limits (`PUT /policies/{packageName}`, with a real JSON `null` to
    clear a limit), downtime schedule editor (`PUT /schedule`), and time
    requests across all devices with approve/deny.

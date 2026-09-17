@@ -3,8 +3,8 @@
 //  OpenLink (parent app)
 //
 //  The list of PAIRED devices — held locally, not fetched from an account.
-//  Each row shows its own live connection state, whether it's visible on this
-//  Wi-Fi via Bonjour, and a lock/unlock toggle (POST /device/lock).
+//  Each row shows its own live connection state and whether it's visible on
+//  this Wi-Fi via Bonjour.
 //
 
 import SwiftUI
@@ -13,7 +13,6 @@ struct DevicesListView: View {
     @EnvironmentObject private var appState: AppState
 
     @State private var isPairing = false
-    @State private var lockInFlight: Set<String> = []
 
     var body: some View {
         List {
@@ -100,7 +99,6 @@ struct DevicesListView: View {
                 .foregroundStyle(.secondary)
             }
             Spacer()
-            lockToggle(session)
         }
         .padding(.vertical, 4)
     }
@@ -119,29 +117,6 @@ struct DevicesListView: View {
             .font(.caption)
         }
         .padding(.vertical, 4)
-    }
-
-    @ViewBuilder
-    private func lockToggle(_ session: DeviceSession) -> some View {
-        Button {
-            Task {
-                lockInFlight.insert(session.deviceId)
-                await session.setLock(!session.device.isLocked)
-                lockInFlight.remove(session.deviceId)
-            }
-        } label: {
-            if lockInFlight.contains(session.deviceId) {
-                ProgressView()
-                    .frame(width: 28, height: 28)
-            } else {
-                Image(systemName: session.device.isLocked ? "lock.fill" : "lock.open")
-                    .font(.title3)
-                    .foregroundStyle(session.device.isLocked ? .red : .green)
-                    .frame(width: 28, height: 28)
-            }
-        }
-        .buttonStyle(.plain)
-        .disabled(lockInFlight.contains(session.deviceId))
     }
 
     private func statusText(_ session: DeviceSession) -> String {

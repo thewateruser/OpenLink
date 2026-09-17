@@ -2,8 +2,8 @@
 //  DeviceDetailView.swift
 //  OpenLink (parent app)
 //
-//  One child device: lock control, downtime schedule, per-app limits from
-//  GET /apps, and the connection/endpoint details.
+//  One child device: downtime schedule, per-app limits from GET /apps, and
+//  the connection/endpoint details.
 //
 
 import SwiftUI
@@ -17,13 +17,11 @@ struct DeviceDetailView: View {
     @State private var showScheduleEditor = false
     @State private var showEndpoints = false
     @State private var showUnpairConfirmation = false
-    @State private var isTogglingLock = false
     @State private var hidesSystemApps = true
 
     var body: some View {
         List {
             statusSection
-            lockSection
             scheduleSection
             appsSection
             connectionSection
@@ -90,37 +88,6 @@ struct DeviceDetailView: View {
                     .foregroundStyle(.red)
                 Button("Try Again") { session.reconnect() }
                     .font(.footnote)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var lockSection: some View {
-        Section {
-            HStack {
-                Label(
-                    session.device.isLocked ? "Device is locked" : "Device is unlocked",
-                    systemImage: session.device.isLocked ? "lock.fill" : "lock.open"
-                )
-                .foregroundStyle(session.device.isLocked ? .red : .green)
-                Spacer()
-                if isTogglingLock {
-                    ProgressView()
-                } else {
-                    Button(session.device.isLocked ? "Unlock" : "Lock Now") {
-                        Task {
-                            isTogglingLock = true
-                            await session.setLock(!session.device.isLocked)
-                            isTogglingLock = false
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                }
-            }
-            if !session.connectionState.isConnected {
-                Text("Locking needs a live connection — a lock can't be delivered to a device that can't be reached.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
         }
     }

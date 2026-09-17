@@ -3,7 +3,7 @@
 //  OpenLink (parent app)
 //
 //  Persistence for the non-secret half of a pairing: names, endpoint lists,
-//  cached lock/battery state. Secrets live in `DeviceCredentialStore`.
+//  cached battery state. Secrets live in `DeviceCredentialStore`.
 //
 //  UserDefaults is enough here — this is a small, frequently-rewritten list
 //  (every endpoint-learning merge touches it) and none of it is sensitive.

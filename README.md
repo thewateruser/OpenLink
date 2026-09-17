@@ -150,16 +150,4 @@ Being straight about where things stand:
   those inside the child app would be a serious vulnerability, so OpenLink
   doesn't. The parent sees pending requests on opening the app; if the app
   is merely backgrounded with a live socket, it raises a local notification.
-- **Android enforcement can be defeated by someone with physical access**,
-  by revoking the accessibility permission or uninstalling the app. This is
-  true of every non-MDM parental control app on Android — Family Link
-  included. Real tamper-resistance requires Android Enterprise Device Owner
-  provisioning, a substantially bigger undertaking, and OpenLink
-  deliberately does not go near that kind of privilege.
-- **Not implemented**: usage history beyond 30 days, per-parent permission
-  tiers, iOS-as-managed-device (Apple's Screen Time APIs are a different and
-  far more restrictive integration).
 
-OpenLink works best as a tool for a cooperative household — one where the
-rules are agreed on and the app enforces them consistently, rather than one
-where it's an adversarial lock to be beaten.

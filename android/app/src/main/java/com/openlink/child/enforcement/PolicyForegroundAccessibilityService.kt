@@ -18,10 +18,9 @@ import kotlinx.coroutines.launch
  * UsageStatsManager -- effectively requires an AccessibilityService listening for
  * TYPE_WINDOW_STATE_CHANGED events. Since this service is already running and already holds a
  * privileged binding, it can also draw a `TYPE_ACCESSIBILITY_OVERLAY` window directly: that
- * overlay type is granted implicitly by the accessibility-service binding itself, so showing it
- * does NOT additionally depend on the user having granted SYSTEM_ALERT_WINDOW ("display over
- * other apps"). That keeps the main enforcement path working as long as a single permission
- * (accessibility) is granted, instead of two.
+ * overlay type is granted implicitly by the accessibility-service binding itself. This is why the
+ * app does not request SYSTEM_ALERT_WINDOW ("display over other apps") at all -- enforcement needs
+ * exactly one permission, not two.
  *
  * The consequence is that this service is the whole of enforcement: if the user turns it off,
  * nothing else can tell which app is in the foreground, so blocking stops. That is the known

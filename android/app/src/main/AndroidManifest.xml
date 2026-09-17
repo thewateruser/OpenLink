@@ -18,10 +18,6 @@
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
 
-    <!-- Lets the full-screen block overlay be drawn over other apps; see the design-note comment
-         in enforcement/PolicyForegroundAccessibilityService.kt. -->
-    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
-
     <!-- Foreground monitor service -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />

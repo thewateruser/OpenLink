@@ -17,7 +17,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -38,7 +37,6 @@ import com.openlink.child.data.TimeRequestEntity
 import com.openlink.child.data.UsageEntity
 import com.openlink.child.domain.ChildRepository
 import com.openlink.child.enforcement.AlwaysAllowed
-import com.openlink.child.enforcement.EnforcementRepository
 import com.openlink.child.server.ServerState
 import com.openlink.child.ui.requesttime.RequestTimeDialog
 import com.openlink.child.util.todayDateString
@@ -70,7 +68,6 @@ fun HomeScreen(initialRequestPackage: String? = null, onOpenSettings: () -> Unit
     val policies by db.policyDao().observeAll().collectAsState(initial = emptyList())
     val usage by db.usageDao().observeForDate(today).collectAsState(initial = emptyList())
     val requests by db.requestDao().observeAll().collectAsState(initial = emptyList())
-    val isLocked by EnforcementRepository.lockState.collectAsState()
     val serverStatus by ServerState.snapshot.collectAsState()
 
     var requestDialogPackage by remember { mutableStateOf(initialRequestPackage) }
@@ -86,16 +83,6 @@ fun HomeScreen(initialRequestPackage: String? = null, onOpenSettings: () -> Unit
         }
     ) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize()) {
-            if (isLocked) {
-                Surface(color = MaterialTheme.colorScheme.errorContainer, modifier = Modifier.fillMaxWidth()) {
-                    Text(
-                        "This device is locked by a parent.",
-                        modifier = Modifier.padding(16.dp),
-                        color = MaterialTheme.colorScheme.onErrorContainer
-                    )
-                }
-            }
-
             Text(
                 when {
                     !serverStatus.running -> "Protection is not running."

@@ -1,8 +1,6 @@
 package com.openlink.child.ui.permissions
 
-import android.app.admin.DevicePolicyManager
 import android.content.Intent
-import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -36,7 +34,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import com.openlink.child.admin.ChildDeviceAdminReceiver
 import com.openlink.child.service.MonitorForegroundService
 
 private data class PermissionItem(
@@ -49,14 +46,14 @@ private data class PermissionItem(
 
 /**
  * Walks the user through every special/runtime permission this app needs: usage access, the
- * accessibility service, device admin, "display over other apps", and (Android 13+)
- * notifications. Statuses are re-checked whenever the screen resumes, since all of these are
- * granted in a separate Settings screen the user backs out of.
+ * accessibility service, "display over other apps", and (Android 13+) notifications. Statuses are
+ * re-checked whenever the screen resumes, since all of these are granted in a separate Settings
+ * screen the user backs out of.
  *
- * Unchanged by the move to a serverless architecture -- these permissions are about enforcing on
- * this device, which is the half of the app that never depended on a server. The one difference
- * is what happens after: continuing now starts the foreground service *and* the listener a
- * parent will connect to, which is why pairing comes after this screen rather than before it.
+ * None of them is an administrative privilege: the app never asks to be a Device Admin, so it
+ * stays uninstallable like any other app. Continuing starts the foreground service *and* the
+ * listener a parent will connect to, which is why pairing comes after this screen rather than
+ * before it.
  */
 @Composable
 fun PermissionsScreen(onAllGrantedContinue: () -> Unit) {
@@ -92,38 +89,6 @@ fun PermissionsScreen(onAllGrantedContinue: () -> Unit) {
                 isGranted = { PermissionChecks.hasAccessibilityServiceEnabled(context) },
                 required = true,
                 launch = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
-            ),
-            PermissionItem(
-                title = "Device admin",
-                description = "Lets a parent lock this device remotely. Removing this later is " +
-                    "treated as unpairing the device, and the parent will be notified (best-effort).",
-                isGranted = { PermissionChecks.hasDeviceAdmin(context) },
-                required = true,
-                launch = {
-                    val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
-                        putExtra(
-                            DevicePolicyManager.EXTRA_DEVICE_ADMIN,
-                            ChildDeviceAdminReceiver.componentName(context)
-                        )
-                        putExtra(
-                            DevicePolicyManager.EXTRA_ADD_EXPLANATION,
-                            "OpenLink needs this to lock the device when a parent sends a remote lock."
-                        )
-                    }
-                    context.startActivity(intent)
-                }
-            ),
-            PermissionItem(
-                title = "Display over other apps",
-                description = "Backup so a remote lock can still show a block screen even if the " +
-                    "accessibility service gets turned off.",
-                isGranted = { PermissionChecks.hasOverlayPermission(context) },
-                required = true,
-                launch = {
-                    context.startActivity(
-                        Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
-                    )
-                }
             ),
             PermissionItem(
                 title = "Notifications",

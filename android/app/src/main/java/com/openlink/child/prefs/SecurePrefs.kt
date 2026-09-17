@@ -114,7 +114,7 @@ class SecurePrefs(context: Context) {
         prefs.edit().putString(KEY_PARENTS, json.encodeToString(ListSerializer, parents)).apply()
     }
 
-    // ---- listener / lock state ------------------------------------------------------------------
+    // ---- listener state -------------------------------------------------------------------------
 
     /** Last port the embedded server actually bound, so the UI can show it before restart. */
     fun lastBoundPort(): Int? = prefs.getInt(KEY_LAST_PORT, 0).takeIf { it > 0 }
@@ -123,32 +123,12 @@ class SecurePrefs(context: Context) {
         prefs.edit().putInt(KEY_LAST_PORT, port).apply()
     }
 
-    /**
-     * Remote-lock state has to survive a process restart, otherwise force-stopping the app (or
-     * simply running out of memory) silently unlocks a locked device.
-     */
-    fun isLocked(): Boolean = prefs.getBoolean(KEY_IS_LOCKED, false)
-
-    fun setLocked(locked: Boolean) {
-        prefs.edit().putBoolean(KEY_IS_LOCKED, locked).apply()
-    }
-
-    // ---- device admin ---------------------------------------------------------------------------
-
-    fun setDeviceAdminRevokedAt(timestampMs: Long) {
-        prefs.edit().putLong(KEY_ADMIN_REVOKED_AT, timestampMs).apply()
-    }
-
-    fun getDeviceAdminRevokedAt(): Long = prefs.getLong(KEY_ADMIN_REVOKED_AT, 0L)
-
     companion object {
         private const val FILE_NAME = "openlink_secure_prefs"
         private const val KEY_DEVICE_ID = "device_id"
         private const val KEY_DEVICE_NAME = "device_name"
         private const val KEY_PARENTS = "paired_parents"
         private const val KEY_LAST_PORT = "last_bound_port"
-        private const val KEY_IS_LOCKED = "is_locked"
-        private const val KEY_ADMIN_REVOKED_AT = "device_admin_revoked_at"
 
         private val ListSerializer = kotlinx.serialization.builtins.ListSerializer(
             PairedParent.serializer()

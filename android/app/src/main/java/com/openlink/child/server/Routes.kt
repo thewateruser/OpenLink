@@ -173,13 +173,6 @@ fun Application.openLinkModule(deps: ServerDependencies) {
             call.respond(deps.repository.deviceSnapshot(deps.port))
         }
 
-        post("/device/lock") {
-            val parent = call.requireParent()
-            val body = call.receive<LockRequest>()
-            val locked = deps.repository.setLocked(body.locked, originParentId = parent.parentId)
-            call.respond(LockResponse(locked))
-        }
-
         delete("/pair") {
             val caller = call.requireParent()
             // The body is optional: no body (or an empty one) means "unpair me".

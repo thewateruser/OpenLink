@@ -94,10 +94,11 @@ ios/               SwiftUI app for the parent (XcodeGen project)
 | **Android** (child device) | **8.0 Oreo, API 26** | API 34 |
 | **iOS** (parent app) | **iOS 16.0** — iPhone 8 and later, plus iPad | iOS 16 SDK |
 
-The Android floor is a hard one: the blocking overlay uses
-`TYPE_APPLICATION_OVERLAY` and the foreground service needs
-`NotificationChannel`, both introduced in API 26. It covers the large
-majority of Android devices still in use.
+The Android floor is set by `NotificationChannel`, which the foreground
+service's persistent notification requires, introduced in API 26. (The
+blocking overlay itself needs only `TYPE_ACCESSIBILITY_OVERLAY`, available
+since API 22, so the notification is what actually binds.) API 26 covers
+the large majority of Android devices still in use.
 
 The iOS floor is softer — it comes from SwiftUI's `NavigationStack`, not
 from anything structural. Everything security-related (CryptoKit,

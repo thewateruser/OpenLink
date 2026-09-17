@@ -73,7 +73,7 @@ dependencies {
     implementation("androidx.navigation:navigation-compose:2.7.7")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
-    // Secure local storage: parent token hashes, device id, lock state.
+    // Secure local storage: parent token hashes, device id, listener port.
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
     // Local database. The child device is the source of truth, so this is not a cache.

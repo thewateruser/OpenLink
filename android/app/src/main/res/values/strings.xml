@@ -1,4 +1,4 @@
 <resources>
     <string name="app_name">OpenLink</string>
-    <string name="accessibility_service_description">Lets OpenLink detect which app is currently in the foreground so it can enforce screen-time limits, downtime schedules, and remote locks, and show a block screen when needed.</string>
+    <string name="accessibility_service_description">Lets OpenLink detect which app is currently in the foreground so it can enforce screen-time limits and downtime schedules, and show a block screen when needed.</string>
 </resources>

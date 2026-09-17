@@ -73,8 +73,6 @@ fun SettingsScreen(
     var pendingRevoke by remember { mutableStateOf<PairedParent?>(null) }
     var showUnpairAllConfirm by remember { mutableStateOf(false) }
 
-    val adminRevokedAt = remember { prefs.getDeviceAdminRevokedAt() }
-
     // Keystore access can block; never on the composition thread.
     LaunchedEffect(Unit) {
         fingerprint = withContext(Dispatchers.Default) {
@@ -197,19 +195,6 @@ fun SettingsScreen(
                     "time protection restarts.",
                 style = MaterialTheme.typography.bodySmall
             )
-
-            // ---- warnings -------------------------------------------------------------------
-            if (adminRevokedAt > 0) {
-                Spacer(Modifier.height(24.dp))
-                Text(
-                    "Device admin access was removed on ${isoFromEpochMillis(adminRevokedAt)}. " +
-                        "A parent's remote lock will still show the block screen, but it can no " +
-                        "longer engage the phone's own lock screen. Re-grant device admin from " +
-                        "the permissions screen if this was accidental.",
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodySmall
-                )
-            }
 
             Spacer(Modifier.height(32.dp))
             OutlinedButton(

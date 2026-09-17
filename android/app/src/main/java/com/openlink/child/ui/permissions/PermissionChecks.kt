@@ -7,7 +7,6 @@ import android.os.Build
 import android.os.Process
 import android.provider.Settings
 import androidx.core.content.ContextCompat
-import com.openlink.child.admin.ChildDeviceAdminReceiver
 import com.openlink.child.enforcement.PolicyForegroundAccessibilityService
 
 object PermissionChecks {
@@ -22,10 +21,6 @@ object PermissionChecks {
         }
         return mode == AppOpsManager.MODE_ALLOWED
     }
-
-    fun hasDeviceAdmin(context: Context): Boolean = ChildDeviceAdminReceiver.isActive(context)
-
-    fun hasOverlayPermission(context: Context): Boolean = Settings.canDrawOverlays(context)
 
     fun hasAccessibilityServiceEnabled(context: Context): Boolean {
         val expectedComponent = "${context.packageName}/${PolicyForegroundAccessibilityService::class.java.name}"

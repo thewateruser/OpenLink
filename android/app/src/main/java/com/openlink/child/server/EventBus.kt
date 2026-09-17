@@ -10,9 +10,9 @@ import kotlinx.serialization.json.JsonElement
  * Fan-out of the `/events` WebSocket messages in docs/PROTOCOL.md.
  *
  * Process-wide, because the producers are spread across the app -- the usage poller in the
- * foreground service emits `usage:update`, the REST routes emit `policy:update` and
- * `lock:update`, the child's own "ask for more time" dialog emits `request:new` -- while the
- * consumers are one coroutine per connected parent inside the Ktor module.
+ * foreground service emits `usage:update`, the REST routes emit `policy:update`, the child's own
+ * "ask for more time" dialog emits `request:new` -- while the consumers are one coroutine per
+ * connected parent inside the Ktor module.
  *
  * The buffer drops the oldest event when a slow or wedged parent connection falls behind. That
  * is the right trade for this protocol: every event type is a notification about state that can
@@ -30,7 +30,6 @@ object EventBus {
 
     const val TYPE_REQUEST_NEW = "request:new"
     const val TYPE_USAGE_UPDATE = "usage:update"
-    const val TYPE_LOCK_UPDATE = "lock:update"
     const val TYPE_POLICY_UPDATE = "policy:update"
     const val TYPE_DEVICE_STATE = "device:state"
 
@@ -56,13 +55,6 @@ object EventBus {
                 UsageUpdatePayload.serializer(),
                 UsageUpdatePayload(packageName, minutesUsed, date)
             )
-        )
-
-    fun lockUpdate(isLocked: Boolean, exceptParentId: String? = null) =
-        emit(
-            TYPE_LOCK_UPDATE,
-            apiJson.encodeToJsonElement(LockUpdatePayload.serializer(), LockUpdatePayload(isLocked)),
-            exceptParentId
         )
 
     fun policyUpdate(

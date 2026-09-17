@@ -36,7 +36,6 @@ data class UnpairRequest(val parentId: String? = null)
 data class DeviceResponse(
     val deviceId: String,
     val deviceName: String,
-    val isLocked: Boolean,
     val platform: String,
     val appVersion: String,
     /** Drives endpoint learning on the parent -- see docs/PROTOCOL.md. */
@@ -45,12 +44,6 @@ data class DeviceResponse(
     val batteryLevel: Int?,
     val lastBootAt: String
 )
-
-@Serializable
-data class LockRequest(val locked: Boolean)
-
-@Serializable
-data class LockResponse(val isLocked: Boolean)
 
 // ---- apps and policies -------------------------------------------------------------------------
 
@@ -146,9 +139,6 @@ data class UsageUpdatePayload(
     val minutesUsed: Int,
     val date: String
 )
-
-@Serializable
-data class LockUpdatePayload(val isLocked: Boolean)
 
 @Serializable
 data class PolicyUpdatePayload(

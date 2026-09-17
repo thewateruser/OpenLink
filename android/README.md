@@ -2,8 +2,8 @@
 
 The Android "child device" app for OpenLink. **It is the server.**
 
-There is no backend to host. This app enforces per-app screen-time limits, downtime schedules,
-hard blocks and remote lock locally, stores all of that in its own Room database, and hosts a
+There is no backend to host. This app enforces per-app screen-time limits, downtime schedules and
+hard blocks locally, stores all of that in its own Room database, and hosts a
 small TLS-secured HTTP + WebSocket listener that the companion iOS parent app connects to
 directly — over the LAN at home, or over an overlay network (Tailscale/WireGuard) when the parent
 is away. The wire contract is `../docs/PROTOCOL.md`, and this app implements the server side of
@@ -48,12 +48,19 @@ heavier on Android but its JSSE-backed TLS is well-trodden.
 
 There is no server address to enter and no pairing code to type. First launch is:
 
-1. **Permissions** (`ui/permissions/`) — usage access, accessibility service, device admin,
-   "display over other apps", notifications. Unchanged from before; these are about enforcing on
-   *this* device, which never involved a server.
+1. **Permissions** (`ui/permissions/`) — usage access, accessibility service, notifications.
+   These are about enforcing on *this* device, which never involved a server. Note there is no
+   "display over other apps" step: the accessibility binding grants
+   `TYPE_ACCESSIBILITY_OVERLAY` implicitly, so `SYSTEM_ALERT_WINDOW` is not requested either.
 2. **Pairing** (`ui/pairing/PairingScreen.kt`) — the child's screen shows a QR code; the parent
    scans it. That's the whole flow.
 3. **Home** — today's usage, limits, "ask for more time".
+
+**No device-administrator privilege is requested.** OpenLink deliberately never asks to become a
+Device Admin: that grant goes through an alarming system screen, blocks normal uninstallation, and
+would be far broader than anything here needs. Nothing in the app is an administrative privilege
+over the device, and it can be uninstalled like any other app. Time limits, hard blocks and
+downtime windows are all enforced by the blocking overlay, which needs no such privilege.
 
 Settings shows the paired parents (with per-parent revoke), the port and addresses the device is
 listening on, the certificate fingerprint, a "show a pairing code" action, and a "remove all
@@ -75,7 +82,8 @@ screen closes. `POST /pair` verifies
 for exactly the duration of one HTTP response.
 
 Every other route requires `Authorization: Bearer <token>`, compared by SHA-256 in constant time.
-Specific properties, since this is a network listener on a phone that can lock that phone:
+Specific properties, since this is a network listener on a phone that decides what a child can
+open:
 
 - `POST /pair` is the **only** unauthenticated route, and it is inert outside an open pairing
   window (it has no secret to check a proof against, so it refuses everything).
@@ -118,14 +126,14 @@ socket becomes unanswerable some minutes after the screen goes off, which presen
 
 - **Embedded TLS listener** (`server/OpenLinkServer.kt`, `server/Routes.kt`) — Ktor CIO inside
   `MonitorForegroundService`, so its lifetime is exactly the lifetime of enforcement. Every route
-  in PROTOCOL.md is served: `POST /pair`, `DELETE /pair`, `GET /device`, `POST /device/lock`,
+  in PROTOCOL.md is served: `POST /pair`, `DELETE /pair`, `GET /device`,
   `GET /apps`, `PUT /policies/{packageName}`, `GET|PUT /schedule`, `GET /usage`, `GET /requests`,
   `POST /requests/{id}/approve|deny`, and `WS /events`.
 - **Device identity** (`security/TlsIdentity.kt`) — Keystore-backed, non-exportable, generated
   once.
 - **Pairing** (`pairing/`, `ui/pairing/`) — QR generated on-device with ZXing `core`; single-use
   expiring PSK; constant-time proof verification; rate limiting.
-- **WebSocket `/events`** — `request:new`, `usage:update`, `lock:update`, `policy:update`,
+- **WebSocket `/events`** — `request:new`, `usage:update`, `policy:update`,
   `device:state`, fanned out to every connected parent. `policy:update` skips the parent that
   caused it, per PROTOCOL.md. The bus drops the oldest event rather than blocking when a parent's
   socket stalls: every event describes state that can be re-read over REST, and blocking an
@@ -133,20 +141,15 @@ socket becomes unanswerable some minutes after the screen goes off, which presen
 - **Usage tracking** (`service/MonitorForegroundService.kt`) — polls `UsageStatsManager` every
   30s, tallies today's per-app foreground minutes into Room, 30-day retention, emits
   `usage:update` only for packages whose count actually moved.
-- **Enforcement** (`enforcement/`) — unchanged, and unchanged on purpose. `EnforcementEngine`
-  implements the four rules (lock > hard block > downtime > per-app limit, with the always-allowed
-  exemption applying to downtime but not to a lock); `EnforcementRepository` is the in-memory
-  cache the accessibility service reads synchronously.
+- **Enforcement** (`enforcement/`) — `EnforcementEngine` implements the three rules (hard block >
+  downtime > per-app limit, with the always-allowed list exempt from all of them);
+  `EnforcementRepository` is the in-memory cache the accessibility service reads synchronously.
 - **Blocking overlay** — `PolicyForegroundAccessibilityService` draws a full-screen,
   back-button-proof `TYPE_ACCESSIBILITY_OVERLAY`. See the design note at the top of that file for
-  why this beats a plain `Service` + `SYSTEM_ALERT_WINDOW`, and why the latter is still requested
-  as a documented fallback.
+  why this beats a plain `Service` + `SYSTEM_ALERT_WINDOW`.
 - **Ask for more time** — writes a row locally and announces it. It cannot fail for being
   offline; the previous version silently dropped requests made without a connection. An approval
   lands in the same process, so the app unblocks the instant the parent taps approve.
-- **Remote lock** — `POST /device/lock` persists the state (so a process death can't quietly
-  unlock a locked device), calls `DevicePolicyManager.lockNow()`, raises the overlay, and
-  broadcasts `lock:update`.
 - **UI** — Jetpack Compose + Material 3: permissions, pairing, home/status, settings.
 
 ## What was deleted
@@ -164,7 +167,7 @@ traffic at all now, and what this app *hosts* is TLS-only.
   `./gradlew assembleDebug` on every push and publishes the APK as an artifact, so the Kotlin is
   type-correct and the APK is real and installable. It has never been on a device or emulator.
   Everything below the type system is unverified: the TLS handshake, pairing, the overlay,
-  `lockNow()`, NSD advertisement and the Room queries have all only been *compiled*.
+  NSD advertisement and the Room queries have all only been *compiled*.
 
   Two of the three breakages predicted here before the first build did happen, and are fixed:
   Ktor's `call` is an extension on `PipelineContext` inside `intercept` (it needed an import,
@@ -200,10 +203,11 @@ traffic at all now, and what this app *hosts* is TLS-only.
   `docs/API.md`, which went away with the server; `docs/PROTOCOL.md` deliberately covers only the
   wire contract. The rules are written up in `EnforcementEngine.kt`'s KDoc, but a protocol
   document that a second implementation could be built from should probably state them.
-- **No event for "device admin was revoked".** `ChildDeviceAdminReceiver.onDisabled()` records it
-  locally and the settings screen surfaces it, but PROTOCOL.md's event list has no type for it and
-  inventing one the iOS app doesn't know about would be worse than useless. A future protocol
-  revision (`device:degraded`?) is the right home for this.
+- **No event for "enforcement was turned off".** If the child disables the accessibility service,
+  blocking silently stops, and PROTOCOL.md's event list has no type to tell a parent so — which is
+  exactly the thing a parent would most want to know. Inventing one the iOS app doesn't know about
+  would be worse than useless; a future protocol revision (`device:degraded`?) is the right home
+  for it.
 - **No WorkManager backstop.** Both enforcement *and* the listener now depend on the foreground
   service staying alive (`START_STICKY` + a low-priority persistent notification). Aggressive OEM
   battery managers can still kill it, and the failure mode is worse than it used to be: the parent

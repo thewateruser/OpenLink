@@ -5,8 +5,6 @@ import com.openlink.child.data.AppDatabase
 import com.openlink.child.data.PolicyEntity
 import com.openlink.child.data.ScheduleEntity
 import com.openlink.child.util.todayDateString
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
 
 /**
  * Single in-process source of truth for enforcement decisions.
@@ -20,20 +18,10 @@ import kotlinx.coroutines.flow.StateFlow
  */
 object EnforcementRepository {
 
-    @Volatile private var isLocked: Boolean = false
     @Volatile private var policies: Map<String, PolicyEntity> = emptyMap()
     @Volatile private var schedule: List<ScheduleEntity> = emptyList()
     @Volatile private var usageToday: Map<String, Int> = emptyMap()
     @Volatile private var grantedToday: Map<String, Int> = emptyMap()
-
-    private val _lockState = MutableStateFlow(false)
-    /** Observed by the Compose UI (e.g. to show a "locked by parent" banner on the home screen). */
-    val lockState: StateFlow<Boolean> = _lockState
-
-    fun updateLocked(locked: Boolean) {
-        isLocked = locked
-        _lockState.value = locked
-    }
 
     fun updatePolicies(newPolicies: List<PolicyEntity>) {
         policies = newPolicies.associateBy { it.packageName }
@@ -72,7 +60,6 @@ object EnforcementRepository {
         )
         return EnforcementEngine.evaluate(
             packageName = packageName,
-            isLocked = isLocked,
             schedule = schedule,
             policy = policy,
             state = state,

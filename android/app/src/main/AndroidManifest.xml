@@ -18,8 +18,8 @@
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
 
-    <!-- Fallback full-screen block overlay when the accessibility service is unavailable; see
-         the design-note comment in enforcement/PolicyForegroundAccessibilityService.kt. -->
+    <!-- Lets the full-screen block overlay be drawn over other apps; see the design-note comment
+         in enforcement/PolicyForegroundAccessibilityService.kt. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <!-- Foreground monitor service -->
@@ -70,7 +70,7 @@
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Parental screen-time enforcement, remote lock, and the local listener the parent device connects to" />
+                android:value="Parental screen-time enforcement and the local listener the parent device connects to" />
         </service>
 
         <receiver
@@ -79,20 +79,6 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
-            </intent-filter>
-        </receiver>
-
-        <!-- Lets a parent trigger DevicePolicyManager.lockNow() remotely, and lets us notice when
-             it is revoked (see admin/ChildDeviceAdminReceiver.kt). -->
-        <receiver
-            android:name=".admin.ChildDeviceAdminReceiver"
-            android:exported="true"
-            android:permission="android.permission.BIND_DEVICE_ADMIN">
-            <meta-data
-                android:name="android.app.device_admin"
-                android:resource="@xml/device_admin_policies" />
-            <intent-filter>
-                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
             </intent-filter>
         </receiver>
 

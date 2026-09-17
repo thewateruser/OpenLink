@@ -4,7 +4,6 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
-import android.app.admin.DevicePolicyManager
 import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
@@ -12,18 +11,11 @@ import android.content.pm.ServiceInfo
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
-import android.provider.Settings
 import android.util.Log
-import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import com.openlink.child.MainActivity
 import com.openlink.child.R
-import com.openlink.child.admin.ChildDeviceAdminReceiver
 import com.openlink.child.domain.ChildRepository
-import com.openlink.child.domain.DeviceActions
-import com.openlink.child.enforcement.BlockReason
-import com.openlink.child.enforcement.OverlayController
-import com.openlink.child.enforcement.PolicyForegroundAccessibilityService
 import com.openlink.child.server.DeviceInfo
 import com.openlink.child.server.EventBus
 import com.openlink.child.server.OpenLinkServer
@@ -51,27 +43,23 @@ import java.util.Calendar
  * The fourth job -- pushing usage to a server and polling it back for policy -- is gone, along
  * with the server. Nothing is uploaded and nothing is fetched; the data was always here.
  */
-class MonitorForegroundService : Service(), DeviceActions {
+class MonitorForegroundService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private lateinit var repository: ChildRepository
     private var server: OpenLinkServer? = null
-    private var lockFallbackOverlay: OverlayController? = null
     private var wifiLock: WifiManager.WifiLock? = null
 
     override fun onCreate() {
         super.onCreate()
         repository = ChildRepository.getInstance(applicationContext)
-        repository.deviceActions = this
 
         startForegroundWithNotification()
         acquireWifiLock()
 
         scope.launch {
             repository.primeEnforcement()
-            // A device that was locked when the process died stays locked: re-apply on start.
-            if (repository.isLocked()) applyLock(true)
             repository.pruneOldData()
         }
 
@@ -92,7 +80,6 @@ class MonitorForegroundService : Service(), DeviceActions {
         server?.stop()
         server = null
         releaseWifiLock()
-        repository.deviceActions = null
         scope.cancel()
         super.onDestroy()
     }
@@ -230,48 +217,6 @@ class MonitorForegroundService : Service(), DeviceActions {
         }
 
         repository.recordUsage(tallies, todayDateString())
-    }
-
-    // ---- remote lock ----------------------------------------------------------------------------
-
-    /**
-     * [DeviceActions] implementation: the physical half of a lock. The state itself has already
-     * been persisted and broadcast by ChildRepository before this runs.
-     */
-    override fun applyLock(locked: Boolean) {
-        if (locked) lockDeviceNow()
-
-        val accessibilityServiceRunning = PolicyForegroundAccessibilityService.instance != null
-        when {
-            accessibilityServiceRunning -> PolicyForegroundAccessibilityService.instance?.recheckCurrentApp()
-            locked -> showFallbackLockOverlay()
-            else -> lockFallbackOverlay?.hide()
-        }
-    }
-
-    private fun lockDeviceNow() {
-        try {
-            val devicePolicyManager = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
-            val admin = ChildDeviceAdminReceiver.componentName(this)
-            if (devicePolicyManager.isAdminActive(admin)) {
-                devicePolicyManager.lockNow()
-            }
-        } catch (e: Exception) {
-            // Device-admin not active; the overlay (below / via accessibility) still enforces
-            // visually even though the OS lock screen won't engage immediately.
-        }
-    }
-
-    /** Fallback so a remote lock still visually enforces even when the accessibility service is
-     *  disabled, as long as SYSTEM_ALERT_WINDOW is granted. See the design-note comment on
-     *  PolicyForegroundAccessibilityService for the full reasoning. */
-    private fun showFallbackLockOverlay() {
-        if (!Settings.canDrawOverlays(this)) return
-        val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        val controller = lockFallbackOverlay ?: OverlayController(
-            this, windowManager, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        ).also { lockFallbackOverlay = it }
-        controller.show("this device", BlockReason.LOCKED)
     }
 
     companion object {

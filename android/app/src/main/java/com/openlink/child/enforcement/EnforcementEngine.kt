@@ -12,19 +12,18 @@ import java.util.Calendar
  * specification of record for how policies combine -- see android/README.md, which flags that as
  * a documentation gap worth closing.
  *
- * The four rules, in precedence order:
+ * The three rules, in precedence order:
  *  1. effective daily limit = policy limit + minutes granted by approved requests today
  *     (a null limit stays null: unlimited),
  *  2. a hard block wins over any limit,
- *  3. a downtime window blocks everything except the always-allowed list,
- *  4. an active remote lock wins over everything, including the always-allowed list.
+ *  3. a downtime window blocks everything except the always-allowed list.
  */
 sealed class EnforcementDecision {
     object Allowed : EnforcementDecision()
     data class Blocked(val reason: BlockReason) : EnforcementDecision()
 }
 
-enum class BlockReason { LOCKED, HARD_BLOCKED, DOWNTIME, LIMIT_REACHED }
+enum class BlockReason { HARD_BLOCKED, DOWNTIME, LIMIT_REACHED }
 
 data class AppEnforcementState(
     val packageName: String,
@@ -61,20 +60,17 @@ object EnforcementEngine {
     }
 
     /**
-     * Evaluates rules 1-4 in the precedence documented above: an active remote lock wins
-     * outright (rule 4), then the always-allowed list is exempt from everything *except* that
-     * lock, then a hard block (rule 2), then downtime (rule 3), then the per-app minute limit
+     * Evaluates rules 1-3 in the precedence documented above: the always-allowed list is exempt
+     * outright, then a hard block (rule 2), then downtime (rule 3), then the per-app minute limit
      * (rule 1).
      */
     fun evaluate(
         packageName: String,
-        isLocked: Boolean,
         schedule: List<ScheduleEntity>,
         policy: PolicyEntity?,
         state: AppEnforcementState,
         alwaysAllowed: Boolean
     ): EnforcementDecision {
-        if (isLocked) return EnforcementDecision.Blocked(BlockReason.LOCKED)
         if (alwaysAllowed) return EnforcementDecision.Allowed
         if (policy?.blocked == true) return EnforcementDecision.Blocked(BlockReason.HARD_BLOCKED)
         if (isWithinDowntime(schedule)) return EnforcementDecision.Blocked(BlockReason.DOWNTIME)

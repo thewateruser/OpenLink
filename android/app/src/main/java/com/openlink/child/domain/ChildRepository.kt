@@ -33,12 +33,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.UUID
 
-/** Actions that only the foreground service can perform, handed to the repository at startup. */
-interface DeviceActions {
-    /** Engages or releases a remote lock: `DevicePolicyManager.lockNow()` plus the overlay. */
-    fun applyLock(locked: Boolean)
-}
-
 /**
  * Thrown by repository operations that a route should answer with a specific status. StatusPages
  * turns it into a terse JSON body (see server/Routes.kt).
@@ -58,41 +52,21 @@ class ChildRepository private constructor(private val appContext: Context) {
     private val db = AppDatabase.getInstance(appContext)
     private val prefs = SecurePrefs(appContext)
 
-    /** Set by MonitorForegroundService once it is running; null before that. */
-    @Volatile
-    var deviceActions: DeviceActions? = null
-
     // ---- device ---------------------------------------------------------------------------------
 
     fun deviceId(): String = prefs.deviceId()
 
     fun deviceName(): String = prefs.deviceName()
 
-    fun isLocked(): Boolean = prefs.isLocked()
-
     fun deviceSnapshot(port: Int): DeviceResponse = DeviceResponse(
         deviceId = prefs.deviceId(),
         deviceName = prefs.deviceName(),
-        isLocked = prefs.isLocked(),
         platform = DeviceInfo.PLATFORM,
         appVersion = DeviceInfo.appVersion(appContext),
         endpoints = DeviceInfo.endpoints(port),
         batteryLevel = DeviceInfo.batteryLevel(appContext),
         lastBootAt = DeviceInfo.lastBootAtIso()
     )
-
-    /**
-     * Applies a lock state. Persisted first, so that a process death (or a force-stop) cannot
-     * quietly unlock a device a parent locked.
-     */
-    fun setLocked(locked: Boolean, originParentId: String?): Boolean {
-        prefs.setLocked(locked)
-        EnforcementRepository.updateLocked(locked)
-        deviceActions?.applyLock(locked)
-        EventBus.lockUpdate(locked, exceptParentId = originParentId)
-        recheckForegroundApp()
-        return locked
-    }
 
     // ---- apps and policies ------------------------------------------------------------------------
 
@@ -329,7 +303,6 @@ class ChildRepository private constructor(private val appContext: Context) {
 
     /** Loads the persisted snapshot into the in-memory enforcement cache. */
     suspend fun primeEnforcement() {
-        EnforcementRepository.updateLocked(prefs.isLocked())
         EnforcementRepository.primeFromDatabase(appContext)
         recheckForegroundApp()
     }

@@ -23,12 +23,9 @@ import kotlinx.coroutines.launch
  * other apps"). That keeps the main enforcement path working as long as a single permission
  * (accessibility) is granted, instead of two.
  *
- * SYSTEM_ALERT_WINDOW is still requested separately (see ui/permissions/PermissionsScreen.kt)
- * as a deliberate fallback: MonitorForegroundService uses it to show a `TYPE_APPLICATION_OVERLAY`
- * lock screen if the user has turned the accessibility service off (which -- like removing
- * device-admin -- is worth flagging, since it silently weakens enforcement) but has not also
- * revoked overlay access. Two independent permissions covering two different failure modes,
- * rather than one component depending on both.
+ * The consequence is that this service is the whole of enforcement: if the user turns it off,
+ * nothing else can tell which app is in the foreground, so blocking stops. That is the known
+ * limitation of every non-MDM parental-control app on Android -- see android/README.md.
  */
 class PolicyForegroundAccessibilityService : AccessibilityService() {
 
@@ -73,7 +70,7 @@ class PolicyForegroundAccessibilityService : AccessibilityService() {
     }
 
     /** Re-evaluates the currently-foregrounded app without waiting for the next app switch --
-     *  called after a live `policy:update`, `lock:update`, or approved `request:decision`. */
+     *  called after a live `policy:update` or an approved time request. */
     fun recheckCurrentApp() {
         currentPackage?.let { evaluateAndEnforce(it) }
     }
@@ -96,8 +93,7 @@ class PolicyForegroundAccessibilityService : AccessibilityService() {
     companion object {
         /** Lets MonitorForegroundService push live updates into the running service without a
          *  bound-service round trip; null when the accessibility service isn't currently
-         *  enabled/connected (see the design note above for the SYSTEM_ALERT_WINDOW fallback
-         *  used in that case). */
+         *  enabled/connected. */
         @Volatile var instance: PolicyForegroundAccessibilityService? = null
             private set
     }

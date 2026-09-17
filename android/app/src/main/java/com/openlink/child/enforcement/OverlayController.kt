@@ -20,10 +20,9 @@ import com.openlink.child.MainActivity
  * ViewTreeLifecycleOwner / SavedStateRegistryOwner, which a bare Service or AccessibilityService
  * doesn't provide out of the box. Plain views keep this self-contained and dependency-free.
  *
- * The same controller class backs both real uses: [PolicyForegroundAccessibilityService] passes
- * `TYPE_ACCESSIBILITY_OVERLAY`, and MonitorForegroundService's lock-only fallback passes
- * `TYPE_APPLICATION_OVERLAY` -- see the design-note comment on
- * [PolicyForegroundAccessibilityService] for why there are two paths.
+ * The window type is passed in rather than hard-coded: [PolicyForegroundAccessibilityService]
+ * uses `TYPE_ACCESSIBILITY_OVERLAY`, which its accessibility binding grants implicitly -- see the
+ * design-note comment on that class.
  */
 class OverlayController(
     private val context: Context,
@@ -54,9 +53,8 @@ class OverlayController(
             root.isFocusableInTouchMode = true
             root.requestFocus()
         } catch (e: Exception) {
-            // Overlay type unavailable in this window/permission state (e.g. SYSTEM_ALERT_WINDOW
-            // not granted for the TYPE_APPLICATION_OVERLAY fallback path). The next foreground-app
-            // change / lock update will retry.
+            // Overlay type unavailable in this window/permission state. The next foreground-app
+            // change (or policy refresh) will retry.
         }
     }
 
@@ -101,7 +99,6 @@ class OverlayController(
         }
         val requestButton = Button(context).apply {
             text = "Request more time"
-            visibility = if (reason == BlockReason.LOCKED) View.GONE else View.VISIBLE
             setOnClickListener {
                 val intent = Intent(context, MainActivity::class.java).apply {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
@@ -118,7 +115,6 @@ class OverlayController(
     }
 
     private fun messageFor(packageName: String, reason: BlockReason): String = when (reason) {
-        BlockReason.LOCKED -> "This device has been locked by a parent."
         BlockReason.HARD_BLOCKED -> "$packageName is blocked by a parent."
         BlockReason.DOWNTIME -> "It's downtime right now. This app is unavailable."
         BlockReason.LIMIT_REACHED -> "$packageName's daily time limit has been reached."

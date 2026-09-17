@@ -1,0 +1,198 @@
+# Builds both apps and attaches them to a GitHub Release.
+#
+# Trigger by pushing a tag (`git tag v0.1.0 && git push origin v0.1.0`), or
+# run manually from the Actions tab for an untagged prerelease build.
+#
+# On signing, which is the whole reason these two artifacts differ:
+#
+#   Android — the APK is signed with the debug keystore Gradle generates
+#   automatically, so it installs on any device with "unknown sources"
+#   allowed. See the release notes below for why that is not the same as a
+#   properly signed release build.
+#
+#   iOS — the IPA is UNSIGNED. Producing an installable one requires an Apple
+#   Developer account and a provisioning profile, which CI does not have.
+#   Unsigned is the normal format for sideloading via AltStore / Sideloadly /
+#   TrollStore, which re-sign with the installing user's own Apple ID.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      name: ${{ steps.v.outputs.name }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+    steps:
+      - id: v
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=dev-$(echo ${{ github.sha }} | cut -c1-7)" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  android:
+    name: Android APK
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Accept Android SDK licences
+        run: |
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | head -n 1)
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Name the artifact
+        run: |
+          mkdir -p dist
+          cp android/app/build/outputs/apk/debug/app-debug.apk \
+             "dist/OpenLink-child-${{ needs.version.outputs.name }}.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: dist/*.apk
+          if-no-files-found: error
+
+  ios:
+    name: iOS IPA (unsigned)
+    needs: version
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: ios
+        run: xcodegen generate
+
+      # `build` rather than `archive`: archiving insists on a signing identity
+      # even with signing disabled, whereas a plain device build with signing
+      # off produces exactly the unsigned arm64 .app an IPA wraps.
+      - name: Build unsigned device app
+        working-directory: ios
+        run: |
+          xcodebuild build \
+            -project OpenLink.xcodeproj \
+            -scheme OpenLink \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS=""
+
+      # An IPA is just a zip with the .app inside a top-level Payload/ folder.
+      - name: Package as IPA
+        working-directory: ios
+        run: |
+          APP=build/Build/Products/Release-iphoneos/OpenLink.app
+          test -d "$APP" || { echo "No .app at $APP"; ls -R build/Build/Products; exit 1; }
+          rm -rf Payload && mkdir Payload
+          cp -R "$APP" Payload/
+          mkdir -p ../dist
+          zip -qry "../dist/OpenLink-parent-${{ needs.version.outputs.name }}-unsigned.ipa" Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ipa
+          path: dist/*.ipa
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: [version, android, ios]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -la dist
+          cat > notes.md <<'EOF'
+          OpenLink is a serverless, peer-to-peer alternative to Google Family Link.
+          The Android app is the managed child device; the iOS app is the parent's
+          remote control. They talk directly to each other — there is no server.
+
+          ## Downloads
+
+          | File | Install on |
+          |---|---|
+          | `OpenLink-child-*.apk` | The kid's **Android** phone |
+          | `OpenLink-parent-*-unsigned.ipa` | The parent's **iPhone** |
+
+          ### Android
+
+          Transfer the APK to the phone and open it, allowing installation from
+          unknown sources, or `adb install OpenLink-child-*.apk`.
+
+          This is a **debug build**, signed with Gradle's automatically generated
+          debug key. It installs fine, but it is not a production release build:
+          the debug key is not yours, so a future properly-signed build will not
+          install over it, and it carries debug flags. For a real deployment,
+          generate your own keystore and sign a release build with it.
+
+          ### iOS
+
+          The IPA is **unsigned**, because building an installable one requires an
+          Apple Developer account and provisioning profile that CI does not have.
+          Install it by sideloading, which re-signs it with your own Apple ID:
+
+          - [AltStore](https://altstore.io/) or [Sideloadly](https://sideloadly.io/)
+            — works with a free Apple ID; the app expires every 7 days and needs
+            refreshing. A paid Apple Developer account extends this to a year.
+          - [TrollStore](https://github.com/opa334/TrollStore) — permanent, but
+            only on the iOS versions it supports.
+
+          You can also just open `ios/` in Xcode and run it onto your own device.
+
+          ## Status — please read
+
+          Both apps compile, and **neither has ever been run**. Every failure CI
+          can catch is fixed; nothing below the type system is verified. Pairing,
+          the TLS handshake, the blocking overlay, remote lock and the
+          Keystore-backed certificate have only ever been compiled. Expect real
+          bugs, and do not rely on this to actually restrict a device yet.
+
+          See [`docs/PROTOCOL.md`](docs/PROTOCOL.md) for the protocol and security
+          model, and the per-app READMEs for known gaps.
+          EOF
+
+          gh release create "${{ needs.version.outputs.name }}" \
+            --repo "${{ github.repository }}" \
+            --title "OpenLink ${{ needs.version.outputs.name }}" \
+            --notes-file notes.md \
+            --target "${{ github.sha }}" \
+            $([ "${{ needs.version.outputs.prerelease }}" = "true" ] && echo "--prerelease") \
+            dist/*

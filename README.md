@@ -5,9 +5,9 @@ OpenLink is a FOSS alternative to Google Family Link, with two twists: the
 **no server**. The two phones talk to each other directly.
 
 A parent with an iPhone can set per-app daily time limits on their kid's
-Android phone, lock it remotely, schedule downtime, and approve or deny
-"can I have 15 more minutes?" requests. No Google account, no cloud
-service, and nothing for you to host or maintain.
+Android phone, schedule downtime, and approve or deny "can I have 15 more
+minutes?" requests. No Google account, no cloud service, nothing for you
+to host or maintain — and no administrative privilege over the phone.
 
 ## How it works
 
@@ -68,12 +68,16 @@ same problem reliably.
 - **Hard blocking** — some apps blocked outright, independent of time.
 - **Downtime schedules** — recurring windows (e.g. school nights 9pm–7am)
   where everything but a small allow-list is blocked.
-- **Remote lock** — lock the Android device immediately from the iPhone.
 - **"Ask for more time"** — the kid requests extra minutes for a specific
   app with a message; the parent approves with a minute count, or denies.
   Requests queue on the device and are delivered when a parent connects.
 - **Multiple parents** — several iPhones can pair with one child device,
   each with its own credentials, and any of them can revoke another.
+- **No device-administrator privilege.** OpenLink never asks to be a Device
+  Admin, so there's no alarming system grant and the app uninstalls like any
+  other. That's why there's no remote-lock button: `lockNow()` requires that
+  privilege, and it isn't worth what it costs. Limits, hard blocks and
+  downtime all work without it.
 
 ## Repo layout
 
@@ -131,25 +135,26 @@ Being straight about where things stand:
   SDK on every push, and both are green — so the code is type-correct and
   the APK is a real, installable artifact. But compiling is a long way
   from working: no part of this has been exercised on a physical device.
-  Pairing, the TLS handshake, the blocking overlay, remote lock and the
-  Keystore-backed certificate are all unverified at runtime. Expect to
-  find genuine bugs the moment you try it.
+  Pairing, the TLS handshake, the blocking overlay and the Keystore-backed
+  certificate are all unverified at runtime. Expect to find genuine bugs
+  the moment you try it.
 - **The security model is sound on paper but unreviewed in practice.** The
   QR-delivered certificate fingerprint gives genuine out-of-band
   authentication and defeats MITM, tokens are compared in constant time,
   and the pairing secret is single-use and expiring. But a network listener
-  that can lock a phone deserves a real audit before you trust it on a
-  network you don't control.
+  that can change what a phone is allowed to run deserves a real audit
+  before you trust it on a network you don't control.
 - **No push notifications, by construction.** Waking a closed iOS app needs
   APNs, which needs a provider server holding Apple credentials. Shipping
   those inside the child app would be a serious vulnerability, so OpenLink
   doesn't. The parent sees pending requests on opening the app; if the app
   is merely backgrounded with a live socket, it raises a local notification.
 - **Android enforcement can be defeated by someone with physical access**,
-  by revoking the accessibility or device-admin permission or uninstalling
-  the app. This is true of every non-MDM parental control app on Android —
-  Family Link included. Real tamper-resistance requires Android Enterprise
-  Device Owner provisioning, a substantially bigger undertaking.
+  by revoking the accessibility permission or uninstalling the app. This is
+  true of every non-MDM parental control app on Android — Family Link
+  included. Real tamper-resistance requires Android Enterprise Device Owner
+  provisioning, a substantially bigger undertaking, and OpenLink
+  deliberately does not go near that kind of privilege.
 - **Not implemented**: usage history beyond 30 days, per-parent permission
   tiers, iOS-as-managed-device (Apple's Screen Time APIs are a different and
   far more restrictive integration).

@@ -143,14 +143,13 @@ UTC. Base path is the root — e.g. `https://100.101.102.103:8765/device`.
 - `POST /pair` — see pairing above. The only unauthenticated route.
 
 ### Device
-- `GET /device` -> `{ deviceId, deviceName, isLocked, platform, appVersion,
+- `GET /device` -> `{ deviceId, deviceName, platform, appVersion,
   endpoints: string[], batteryLevel, lastBootAt }`
   `endpoints` is what drives endpoint learning (see above).
-- `POST /device/lock` `{ locked: boolean }` -> `{ isLocked }`
-  On `true` the child calls `DevicePolicyManager.lockNow()` and raises the
-  blocking overlay. Broadcast to other connected parents over the WebSocket.
 - `DELETE /pair` `{ parentId?: string }` -> `204`. Omit `parentId` to unpair
   the calling parent; pass one to revoke a different parent.
+
+There is deliberately **no remote lock**. See *Deliberate limitations*.
 
 ### Apps and policies
 - `GET /apps` -> `[{ packageName, appName, isSystemApp, policy, todayMinutes }]`
@@ -217,7 +216,6 @@ Child -> parent:
 |---|---|---|
 | `request:new` | `TimeRequest` | The kid asks for more time |
 | `usage:update` | `{ packageName, minutesUsed, date }` | Each usage tick (~1/min) |
-| `lock:update` | `{ isLocked }` | Lock state changed (incl. by another parent) |
 | `policy:update` | `{ policies, schedule }` | Changed by another parent |
 | `device:state` | `{ batteryLevel, endpoints }` | Every ~60s, doubles as a keepalive |
 
@@ -236,11 +234,18 @@ This is the normal case, and it's fine:
   the child's database with `status: pending` and is delivered the moment a
   parent connects (live over the WebSocket, or in the `GET /requests`
   response).
-- **Remote lock requires a connection**, necessarily. A lock can't be
-  delivered to a device that can't be reached.
 
 ## Deliberate limitations
 
+- **No remote lock, and no Device Admin permission.** Locking the screen
+  remotely requires `DevicePolicyManager.lockNow()`, which requires the app
+  to be an active Device Admin. That grant is approved through a genuinely
+  alarming system screen, is disproportionate to what it buys, and leaves
+  an app on the device holding a privilege far broader than the one feature
+  using it. OpenLink deliberately does not ask for it: the app requests no
+  administrative privilege over the device at all, and can be uninstalled
+  normally. Time limits, hard blocks and downtime windows all still work —
+  they are enforced by the blocking overlay, which needs no such privilege.
 - **No push notifications.** Waking a closed iOS app requires APNs, which
   requires a provider server with Apple-issued credentials. Shipping those
   credentials inside the child app would be a serious vulnerability, so

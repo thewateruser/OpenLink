@@ -110,7 +110,6 @@ struct UnpairRequestBody: Encodable {
 struct DeviceInfo: Decodable, Equatable {
     let deviceId: String
     let deviceName: String
-    let isLocked: Bool
     let platform: String?
     let appVersion: String?
     let endpoints: [String]
@@ -120,29 +119,19 @@ struct DeviceInfo: Decodable, Equatable {
     let lastBootAt: Date?
 
     private enum CodingKeys: String, CodingKey {
-        case deviceId, deviceName, isLocked, platform, appVersion, endpoints, batteryLevel, lastBootAt
+        case deviceId, deviceName, platform, appVersion, endpoints, batteryLevel, lastBootAt
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         deviceId = try container.decode(String.self, forKey: .deviceId)
         deviceName = try container.decode(String.self, forKey: .deviceName)
-        isLocked = try container.decodeIfPresent(Bool.self, forKey: .isLocked) ?? false
         platform = try container.decodeIfPresent(String.self, forKey: .platform)
         appVersion = try container.decodeIfPresent(String.self, forKey: .appVersion)
         endpoints = try container.decodeIfPresent([String].self, forKey: .endpoints) ?? []
         batteryLevel = try container.decodeIfPresent(Int.self, forKey: .batteryLevel)
         lastBootAt = try container.decodeIfPresent(Date.self, forKey: .lastBootAt)
     }
-}
-
-struct LockRequestBody: Encodable {
-    let locked: Bool
-}
-
-/// `POST /device/lock` -> `{ isLocked }`.
-struct LockStateResponse: Decodable, Equatable {
-    let isLocked: Bool
 }
 
 // MARK: - Apps and policies
@@ -477,7 +466,6 @@ struct DeviceStatePayload: Decodable, Equatable {
 enum DeviceEvent: Decodable {
     case requestNew(TimeRequest)
     case usageUpdate(UsageUpdatePayload)
-    case lockUpdate(Bool)
     case policyUpdate(PolicyUpdatePayload)
     case deviceState(DeviceStatePayload)
     /// A type we don't know about. Forward-compatible by design: an older
@@ -488,10 +476,6 @@ enum DeviceEvent: Decodable {
         case type, payload
     }
 
-    private struct LockPayload: Decodable {
-        let isLocked: Bool
-    }
-
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let type = try container.decode(String.self, forKey: .type)
@@ -500,8 +484,6 @@ enum DeviceEvent: Decodable {
             self = .requestNew(try container.decode(TimeRequest.self, forKey: .payload))
         case "usage:update":
             self = .usageUpdate(try container.decode(UsageUpdatePayload.self, forKey: .payload))
-        case "lock:update":
-            self = .lockUpdate(try container.decode(LockPayload.self, forKey: .payload).isLocked)
         case "policy:update":
             self = .policyUpdate(try container.decode(PolicyUpdatePayload.self, forKey: .payload))
         case "device:state":

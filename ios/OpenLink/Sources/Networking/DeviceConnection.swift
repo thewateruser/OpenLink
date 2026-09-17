@@ -216,11 +216,6 @@ actor DeviceConnection {
         try await send(path: "/device", method: "GET")
     }
 
-    /// `POST /device/lock { locked }` -> `{ isLocked }`.
-    func setLock(_ locked: Bool) async throws -> LockStateResponse {
-        try await send(path: "/device/lock", method: "POST", body: LockRequestBody(locked: locked))
-    }
-
     /// `DELETE /pair`. `parentId == nil` unpairs us; a value revokes that
     /// other parent.
     func unpair(parentId: String?) async throws {

@@ -32,7 +32,6 @@ struct PairedDevice: Codable, Identifiable, Equatable {
 
     // Cached last-known state, so the UI has something to show before the
     // first successful connection of a session.
-    var isLocked: Bool
     var batteryLevel: Int?
 
     var id: String { deviceId }
@@ -45,7 +44,6 @@ struct PairedDevice: Codable, Identifiable, Equatable {
         endpoints: [DeviceEndpoint],
         pairedAt: Date = Date(),
         lastConnectedAt: Date? = nil,
-        isLocked: Bool = false,
         batteryLevel: Int? = nil
     ) {
         self.deviceId = deviceId
@@ -55,7 +53,6 @@ struct PairedDevice: Codable, Identifiable, Equatable {
         self.endpoints = endpoints
         self.pairedAt = pairedAt
         self.lastConnectedAt = lastConnectedAt
-        self.isLocked = isLocked
         self.batteryLevel = batteryLevel
     }
 

@@ -7,9 +7,7 @@
 //
 //  The child device is the source of truth (docs/PROTOCOL.md); this is a
 //  cache with a remote control attached. So every mutation goes out over
-//  REST and the local copy is only updated from what comes back — with one
-//  exception, the lock toggle, which is optimistic because the round trip is
-//  visible to the user.
+//  REST and the local copy is only updated from what comes back.
 //
 
 import Foundation
@@ -53,7 +51,7 @@ final class DeviceSession: ObservableObject, Identifiable {
     var deviceId: String { device.deviceId }
 
     /// Fired whenever `device` changes in a way worth persisting (name,
-    /// endpoint list, cached lock state). The registry owns persistence.
+    /// endpoint list, cached battery level). The registry owns persistence.
     var onDeviceUpdated: ((PairedDevice) -> Void)?
 
     // MARK: - Collaborators
@@ -191,7 +189,6 @@ final class DeviceSession: ObservableObject, Identifiable {
         device.deviceName = info.deviceName.isEmpty ? device.deviceName : info.deviceName
         device.platform = info.platform ?? device.platform
         device.appVersion = info.appVersion ?? device.appVersion
-        device.isLocked = info.isLocked
         device.batteryLevel = info.batteryLevel ?? device.batteryLevel
         applyLearnedEndpoints(info.endpoints)
     }
@@ -251,20 +248,6 @@ final class DeviceSession: ObservableObject, Identifiable {
     }
 
     // MARK: - Commands
-
-    func setLock(_ locked: Bool) async {
-        let previous = device.isLocked
-        device.isLocked = locked // optimistic — the round trip is user-visible
-        do {
-            let result = try await connection.setLock(locked)
-            device.isLocked = result.isLocked
-            persist()
-            lastError = nil
-        } catch {
-            device.isLocked = previous
-            lastError = error.localizedDescription
-        }
-    }
 
     func updatePolicy(packageName: String, body: PolicyUpdateRequest) async throws {
         let updated = try await connection.updatePolicy(packageName: packageName, body: body)
@@ -369,10 +352,6 @@ final class DeviceSession: ObservableObject, Identifiable {
                     todayMinutes: payload.minutesUsed
                 )
             }
-
-        case .lockUpdate(let isLocked):
-            device.isLocked = isLocked
-            persist()
 
         case .policyUpdate(let payload):
             for (packageName, policy) in payload.policies {

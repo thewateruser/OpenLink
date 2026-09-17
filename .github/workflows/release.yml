@@ -21,6 +21,11 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version to release, e.g. v0.1.0. Leave blank for a dev prerelease."
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -33,10 +38,17 @@ jobs:
       name: ${{ steps.v.outputs.name }}
       prerelease: ${{ steps.v.outputs.prerelease }}
     steps:
+      # `gh release create` creates the tag server-side from --target, so a
+      # dispatched run can cut a real version without anyone pushing a tag.
       - id: v
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
           if [ "${{ github.ref_type }}" = "tag" ]; then
             echo "name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          elif [ -n "$INPUT_TAG" ]; then
+            echo "name=$INPUT_TAG" >> "$GITHUB_OUTPUT"
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           else
             echo "name=dev-$(echo ${{ github.sha }} | cut -c1-7)" >> "$GITHUB_OUTPUT"

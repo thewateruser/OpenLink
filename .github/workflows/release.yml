@@ -231,7 +231,7 @@ jobs:
           were visible to a compiler, and none to a check that only proved the
           listener bound a port.
 
-          **New in v0.5.0 — downtime allow-lists.** Each downtime window now
+          **Downtime allow-lists** (added in v0.5.0). Each downtime window
           carries its own list of apps it lets through, so "22:00–07:00, but
           the phone and messages still work" is expressible. Set it per window
           from the iPhone: tap a window, then **Always allowed**. Two rules

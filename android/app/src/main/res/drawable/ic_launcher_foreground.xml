@@ -1,4 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    The shield, sized to survive an adaptive icon's mask.
+
+    An adaptive icon is 108x108dp but the launcher crops it: only the inner
+    72dp is guaranteed to survive, and key content is meant to stay inside the
+    inner 66dp so it also survives the parallax launchers apply to the
+    foreground layer during animations.
+
+    The original path here spanned y=14..98, which put its point, its tip and
+    both shoulders outside a circular mask: 42 of 100 sampled points on the
+    outline fell beyond it, and the icon rendered as an almost solid white
+    circle with two slivers of blue. That is why this is scaled by 0.7778
+    about the shape's own centre (54,56), moving it onto the icon centre
+    (54,54) and bringing its furthest point to exactly 33dp - the 66dp safe
+    circle.
+
+    The geometry is otherwise untouched, so this still draws the same shield
+    as ios/OpenLink/Assets.xcassets/AppIcon.appiconset/AppIcon.png, on the
+    same #3B5FE3 background.
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
@@ -6,5 +26,5 @@
     android:viewportHeight="108">
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M54,14L24,26v24c0,23 13,42 30,48 17,-6 30,-25 30,-48V26z" />
+        android:pathData="M54,21.33L30.67,30.67L30.67,49.33C30.67,67.22 40.78,82 54,86.67C67.22,82 77.33,67.22 77.33,49.33L77.33,30.67z" />
 </vector>

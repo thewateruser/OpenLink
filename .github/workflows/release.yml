@@ -199,11 +199,22 @@ jobs:
 
           ## Status — please read
 
-          Both apps compile, and **neither has ever been run**. Every failure CI
-          can catch is fixed; nothing below the type system is verified. Pairing,
-          the TLS handshake, the blocking overlay and the Keystore-backed
-          certificate have only ever been compiled. Expect real bugs, and do not
-          rely on this to actually restrict a device yet.
+          **What is verified:** every push boots an Android emulator on two API
+          levels and asserts the app starts — the background service comes up,
+          the TLS listener binds a port, and it reports a reachable address.
+          The iOS app is compile-checked against the current SDK.
+
+          **What is not:** completing a pairing handshake with a real iPhone,
+          certificate pinning against the live certificate, the blocking
+          overlay, and downtime schedules have no automated coverage. Expect
+          bugs there, and don't rely on this for a rule that actually matters
+          yet.
+
+          That smoke test exists because three separate bugs shipped in builds
+          where every check was green — a crash on Android 10–13, an HTTP engine
+          that cannot do TLS, and a TLS setup that could never load the device's
+          key. None were visible to a compiler; all three were obvious the first
+          time an emulator ran the app.
 
           See [`docs/PROTOCOL.md`](docs/PROTOCOL.md) for the protocol and security
           model, and the per-app READMEs for known gaps.

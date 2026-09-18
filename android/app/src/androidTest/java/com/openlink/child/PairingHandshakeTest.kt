@@ -126,12 +126,13 @@ class PairingHandshakeTest {
     fun aClientPinningTheWrongCertificateCannotConnectAtAll() {
         PairingSession.begin()
         val wrongFingerprint = ByteArray(32).also { SecureRandom().nextBytes(it) }
+        val pinning = PinningTrustManager(wrongFingerprint)
 
         try {
             post(
                 path = "/pair",
                 body = pairBody(Crypto.base64Url(Crypto.randomBytes(32)), "nope"),
-                trustManager = PinningTrustManager(wrongFingerprint)
+                trustManager = pinning
             )
             throw AssertionError(
                 "A client pinning an unrelated fingerprint completed the TLS handshake. " +
@@ -140,6 +141,15 @@ class PairingHandshakeTest {
         } catch (expected: IOException) {
             // What a refused handshake looks like from HttpsURLConnection.
         }
+
+        // Without this the test passes for the wrong reason whenever the server's TLS is
+        // broken outright: a handshake that dies before any certificate is presented also
+        // throws IOException, and would look exactly like pinning doing its job.
+        assertNotNull(
+            "The connection failed before the device presented any certificate, so this " +
+                "proves nothing about pinning -- the listener's TLS is broken.",
+            pinning.presentedFingerprint
+        )
     }
 
     // MARK: - HTTPS client

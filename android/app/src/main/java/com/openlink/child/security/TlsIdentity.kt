@@ -6,7 +6,9 @@ import android.util.Log
 import java.math.BigInteger
 import java.security.KeyPairGenerator
 import java.security.KeyStore
+import java.security.PrivateKey
 import java.security.SecureRandom
+import java.security.Signature
 import java.security.cert.X509Certificate
 import java.security.spec.ECGenParameterSpec
 import java.util.Date
@@ -104,6 +106,20 @@ class TlsIdentity private constructor(
             val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
             if (!keyStore.containsAlias(KEY_ALIAS)) {
                 generateKeyPair()
+            } else if (!canSignTlsHandshakes(keyStore)) {
+                // Migration for devices that already generated a key under the old, broken
+                // digest set. Those keys cannot complete a handshake and never will, so the
+                // identity is useless and replacing it costs nothing -- no parent can have
+                // paired against it, because pairing requires a handshake that could not
+                // happen. Silently living with it would mean the app never works on exactly
+                // the devices that installed it first.
+                Log.w(TAG, "Existing TLS key cannot sign a handshake; regenerating it")
+                try {
+                    keyStore.deleteEntry(KEY_ALIAS)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Could not delete the unusable key: ${e.javaClass.simpleName}")
+                }
+                generateKeyPair()
             }
 
             val certificate = keyStore.getCertificate(KEY_ALIAS) as? X509Certificate
@@ -126,6 +142,32 @@ class TlsIdentity private constructor(
             cached = null
         }
 
+        /**
+         * Performs the exact operation a TLS handshake needs, and reports whether the key can
+         * do it.
+         *
+         * Checking the key's authorised digests through KeyInfo would be reading metadata and
+         * re-deriving what the TLS stack will ask for -- the same reasoning that produced the
+         * bug. This asks the key to sign a 32-byte digest through NONEwithECDSA, which is
+         * precisely what Conscrypt does during a handshake, and believes the answer.
+         */
+        private fun canSignTlsHandshakes(keyStore: KeyStore): Boolean = try {
+            val privateKey = keyStore.getKey(KEY_ALIAS, null) as? PrivateKey
+            if (privateKey == null) {
+                false
+            } else {
+                Signature.getInstance("NONEwithECDSA").run {
+                    initSign(privateKey)
+                    update(ByteArray(32)) // a SHA-256-sized digest, as the handshake supplies
+                    sign()
+                }
+                true
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "TLS key self-test failed: ${e.javaClass.simpleName}: ${e.message}")
+            false
+        }
+
         private fun generateKeyPair() {
             val now = System.currentTimeMillis()
             val notBefore = Date(now - TimeUnit.DAYS.toMillis(1)) // tolerate a skewed clock
@@ -136,10 +178,24 @@ class TlsIdentity private constructor(
                 KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY
             )
                 .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
-                // TLS 1.2/1.3 ECDSA signatures use SHA-256 or SHA-384 depending on what the
-                // peer negotiates; allowing both avoids a handshake failure against a client
-                // whose preference list we do not control.
+                // DIGEST_NONE is the one that actually matters, and leaving it out broke
+                // every TLS handshake this device ever attempted.
+                //
+                // The obvious reasoning -- "TLS 1.2/1.3 ECDSA uses SHA-256 or SHA-384, so
+                // authorise those" -- is wrong about who does the hashing. Conscrypt computes
+                // the handshake digest itself and then asks the key to sign that digest raw,
+                // through NONEwithECDSA (see CryptoUpcalls.ecSignDigestWithPrivateKey). A key
+                // that authorises only the SHA digests refuses that operation with
+                // KeyStoreException: Incompatible digest, the handshake dies mid-flight, and
+                // the peer sees the connection close. The SHA entries below are kept for any
+                // stack that delegates hashing to the key instead, but NONE is what the
+                // platform's own TLS implementation needs.
+                //
+                // Authorising DIGEST_NONE means the key will sign a caller-supplied 32 bytes
+                // without hashing them. That is inherent to using a keystore key for TLS on
+                // Android, and the key is used for nothing else.
                 .setDigests(
+                    KeyProperties.DIGEST_NONE,
                     KeyProperties.DIGEST_SHA256,
                     KeyProperties.DIGEST_SHA384,
                     KeyProperties.DIGEST_SHA512

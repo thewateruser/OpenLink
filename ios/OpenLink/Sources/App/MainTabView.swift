@@ -13,19 +13,22 @@ import SwiftUI
 struct MainTabView: View {
     var body: some View {
         TabView {
-            NavigationStack {
+            NavigationView {
                 DevicesListView()
             }
+            .navigationViewStyle(.stack)
             .tabItem { Label("Devices", systemImage: "iphone.and.arrow.forward") }
 
-            NavigationStack {
+            NavigationView {
                 RequestsListView()
             }
+            .navigationViewStyle(.stack)
             .tabItem { Label("Requests", systemImage: "clock.badge.questionmark") }
 
-            NavigationStack {
+            NavigationView {
                 SettingsView()
             }
+            .navigationViewStyle(.stack)
             .tabItem { Label("Settings", systemImage: "gearshape") }
         }
     }

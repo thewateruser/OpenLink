@@ -83,7 +83,12 @@ struct SettingsView: View {
 
             Section {
                 if let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String {
-                    LabeledContent("Version", value: version)
+                    HStack {
+                        Text("Version")
+                        Spacer()
+                        Text(version)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
         }

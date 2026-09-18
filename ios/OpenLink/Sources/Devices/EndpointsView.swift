@@ -81,7 +81,7 @@ struct EndpointsView: View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text(endpoint.authority)
-                    .font(.body.monospaced())
+                    .font(.system(.body, design: .monospaced))
                 Text(sourceLabel(endpoint.source))
                     .font(.caption2)
                     .foregroundStyle(.secondary)

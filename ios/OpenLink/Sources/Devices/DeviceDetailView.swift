@@ -32,19 +32,22 @@ struct DeviceDetailView: View {
         .refreshable { await session.refresh() }
         .task { await session.refresh() }
         .sheet(item: $editingApp) { app in
-            NavigationStack {
+            NavigationView {
                 PolicyEditorView(session: session, app: app)
             }
+            .navigationViewStyle(.stack)
         }
         .sheet(isPresented: $showScheduleEditor) {
-            NavigationStack {
+            NavigationView {
                 ScheduleEditorView(session: session, initialWindows: session.schedule)
             }
+            .navigationViewStyle(.stack)
         }
         .sheet(isPresented: $showEndpoints) {
-            NavigationStack {
+            NavigationView {
                 EndpointsView(session: session)
             }
+            .navigationViewStyle(.stack)
         }
         .confirmationDialog(
             "Remove “\(session.device.deviceName)”?",

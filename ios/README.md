@@ -35,7 +35,12 @@ all only ever been *compiled*. Before relying on it:
 
 ## Prerequisites
 
-- macOS with Xcode 15 or newer (iOS 16 SDK)
+- macOS with Xcode 15 or newer
+- **Minimum iOS version: 15.1.** The SDK you build against just needs to be
+  current; the deployment target in `project.yml` is `15.1`, so the app runs
+  on any iPhone that can reach iOS 15.1. `NavigationView` (deprecated but
+  functional) is used instead of iOS 16's `NavigationStack` for this reason —
+  don't "modernise" it back without raising the floor first.
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen): `brew install xcodegen`
 - A child Android device running the OpenLink child app, on the same Wi-Fi
 

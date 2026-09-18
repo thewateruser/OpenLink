@@ -95,7 +95,7 @@ struct RequestsListView: View {
         .refreshable { await refresh() }
         .task { await refresh() }
         .sheet(item: $activeSheet) { sheet in
-            NavigationStack {
+            NavigationView {
                 switch sheet {
                 case .approve(let deviceId, let request):
                     ApproveRequestView(request: request) { minutes in
@@ -111,6 +111,7 @@ struct RequestsListView: View {
                     }
                 }
             }
+            .navigationViewStyle(.stack)
         }
     }
 

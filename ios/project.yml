@@ -2,7 +2,7 @@ name: OpenLink
 options:
   bundleIdPrefix: org.openlink
   deploymentTarget:
-    iOS: "16.0"
+    iOS: "15.1"
   createIntermediateGroups: true
   generateEmptyDirectories: false
 
@@ -19,7 +19,7 @@ targets:
   OpenLink:
     type: application
     platform: iOS
-    deploymentTarget: "16.0"
+    deploymentTarget: "15.1"
     sources:
       - path: OpenLink/Sources
     resources:

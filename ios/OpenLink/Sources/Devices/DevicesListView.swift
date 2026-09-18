@@ -26,24 +26,13 @@ struct DevicesListView: View {
 
             Section {
                 ForEach(appState.registry.sessions) { session in
-                    NavigationLink(value: session.deviceId) {
+                    NavigationLink(destination: DeviceDetailView(session: session)) {
                         deviceRow(session)
                     }
                 }
             }
         }
         .navigationTitle("Devices")
-        .navigationDestination(for: String.self) { deviceId in
-            if let session = appState.registry.session(for: deviceId) {
-                DeviceDetailView(session: session)
-            } else {
-                ContentUnavailableFallback(
-                    title: "Device Removed",
-                    message: "This device is no longer paired with this phone.",
-                    systemImage: "iphone.slash"
-                )
-            }
-        }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -54,7 +43,7 @@ struct DevicesListView: View {
             }
         }
         .sheet(isPresented: $isPairing) {
-            NavigationStack {
+            NavigationView {
                 PairDeviceView()
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
@@ -62,6 +51,7 @@ struct DevicesListView: View {
                         }
                     }
             }
+            .navigationViewStyle(.stack)
         }
         .refreshable {
             await appState.registry.refreshAllOnForeground()
@@ -158,7 +148,7 @@ struct ConnectionDot: View {
     }
 }
 
-/// ContentUnavailableView-style fallback that works on iOS 16.
+/// ContentUnavailableView-style fallback (the real one is iOS 17+).
 struct ContentUnavailableFallback: View {
     let title: String
     let message: String

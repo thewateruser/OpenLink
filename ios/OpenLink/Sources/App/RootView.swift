@@ -29,7 +29,7 @@ struct WelcomeView: View {
     @State private var isPairing = false
 
     var body: some View {
-        NavigationStack {
+        NavigationView {
             VStack(spacing: 24) {
                 Spacer()
 
@@ -66,7 +66,7 @@ struct WelcomeView: View {
             .navigationTitle("OpenLink")
             .navigationBarTitleDisplayMode(.inline)
             .sheet(isPresented: $isPairing) {
-                NavigationStack {
+                NavigationView {
                     PairDeviceView()
                         .toolbar {
                             ToolbarItem(placement: .cancellationAction) {
@@ -74,7 +74,9 @@ struct WelcomeView: View {
                             }
                         }
                 }
+                .navigationViewStyle(.stack)
             }
         }
+        .navigationViewStyle(.stack)
     }
 }

@@ -157,11 +157,20 @@ provisioning profile that CI doesn't have. Your options:
 Built quickly as a working MVP, not a security-audited product. Where things
 honestly stand:
 
-- **Lightly tested on real hardware.** CI compiles both apps and launches the
-  Android app on an emulator every push, which catches crashes-on-startup but
-  not much else. Pairing, the TLS handshake, the blocking overlay and the
-  Keystore-backed certificate have had little real-device exercise. Expect
-  bugs.
+- **The Android app is verified to start; the rest is lightly tested.** CI
+  boots an emulator on two API levels every push and asserts that the
+  background service comes up and the TLS listener actually binds and reports
+  a reachable address. That much is proven on each commit. What is *not* yet
+  covered by a test: completing a pairing handshake with a real iPhone,
+  certificate pinning against the live certificate, the blocking overlay, and
+  downtime schedules. Expect bugs there.
+
+  Worth knowing how that test came to exist. Three separate bugs shipped in
+  builds where every check was green, because every check only compiled the
+  code: a crash on Android 10–13 the moment you tapped Continue, an HTTP
+  engine that cannot do TLS at all, and a TLS setup that could never load the
+  device's key. None were visible to a compiler; all three were obvious the
+  first time an emulator ran the app.
 - **The security design is sound on paper but unaudited.** The pinned
   fingerprint genuinely defeats impersonation, tokens are compared in
   constant time, the pairing secret is single-use and expiring. But a

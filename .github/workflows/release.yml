@@ -202,7 +202,10 @@ jobs:
           **What is verified:** every push boots an Android emulator on two API
           levels and asserts the app starts — the background service comes up,
           the TLS listener binds a port, and it reports a reachable address.
-          The iOS app is compile-checked against the current SDK.
+          The iOS app is compile-checked against the current SDK, and its
+          pairing-QR parser is unit-tested on a simulator against the exact
+          strings the Android app produces (both apps' tests share fixtures,
+          so the two halves can't drift apart silently).
 
           **What is not:** completing a pairing handshake with a real iPhone,
           certificate pinning against the live certificate, the blocking
@@ -210,11 +213,12 @@ jobs:
           bugs there, and don't rely on this for a rule that actually matters
           yet.
 
-          That smoke test exists because three separate bugs shipped in builds
-          where every check was green — a crash on Android 10–13, an HTTP engine
-          that cannot do TLS, and a TLS setup that could never load the device's
-          key. None were visible to a compiler; all three were obvious the first
-          time an emulator ran the app.
+          Those tests exist because four separate bugs shipped in builds where
+          every check was green — a crash on Android 10–13, an HTTP engine that
+          cannot do TLS, a TLS setup that could never load the device's key, and
+          a pairing QR that every IPv6-capable iPhone refused to read. None were
+          visible to a compiler; each one needed something to actually run the
+          code.
 
           See [`docs/PROTOCOL.md`](docs/PROTOCOL.md) for the protocol and security
           model, and the per-app READMEs for known gaps.

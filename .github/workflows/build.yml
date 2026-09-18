@@ -163,3 +163,33 @@ jobs:
             -configuration Debug \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO
+
+      # The pairing QR is parsed here and written on Android, so a format
+      # mistake is invisible to both compilers and shows up only as a scan
+      # that refuses on a real iPhone. That shipped once; these tests read the
+      # same fixtures the Kotlin test writes.
+      #
+      # The simulator is looked up rather than named: hardcoding "iPhone 16"
+      # breaks the moment the runner image's Xcode moves on.
+      - name: Run unit tests
+        working-directory: ios
+        run: |
+          DEVICE=$(xcrun simctl list devices available -j | jq -r '
+            .devices | to_entries
+            | map(select(.key | test("SimRuntime\\.iOS")))
+            | sort_by(.key) | reverse | .[0].value
+            | map(select(.isAvailable and (.name | startswith("iPhone"))))
+            | .[0].udid')
+          if [ -z "$DEVICE" ] || [ "$DEVICE" = "null" ]; then
+            echo "No available iPhone simulator on this runner:"
+            xcrun simctl list devices available
+            exit 1
+          fi
+          echo "Using simulator $DEVICE"
+          xcodebuild test \
+            -project OpenLink.xcodeproj \
+            -scheme OpenLink \
+            -configuration Debug \
+            -destination "id=$DEVICE" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO

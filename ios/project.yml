@@ -74,6 +74,25 @@ targets:
         CODE_SIGN_STYLE: Automatic
         ENABLE_PREVIEWS: true
 
+  # Logic tests. Deliberately compiles the few files under test straight into
+  # the bundle rather than hosting the app: the pairing payload is pure string
+  # handling, and a test that needs the app installed and launched is a test
+  # nobody runs locally.
+  OpenLinkTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "15.1"
+    sources:
+      - path: OpenLinkTests
+      - path: OpenLink/Sources/Pairing/PairingURI.swift
+      - path: OpenLink/Sources/Model/DeviceEndpoint.swift
+      - path: OpenLink/Sources/Networking/CryptoUtil.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.openlink.parent.tests
+        SWIFT_VERSION: "5.0"
+        GENERATE_INFOPLIST_FILE: YES
+
 schemes:
   OpenLink:
     build:
@@ -85,3 +104,5 @@ schemes:
       config: Release
     test:
       config: Debug
+      targets:
+        - OpenLinkTests

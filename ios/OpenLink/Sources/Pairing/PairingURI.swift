@@ -38,7 +38,9 @@ struct PairingURI: Equatable {
         Base64URL.decode(fingerprintBase64URL) ?? Data()
     }
 
-    enum ParseError: LocalizedError {
+    // Equatable so the tests can assert on the exact failure rather than
+    // on a message string.
+    enum ParseError: LocalizedError, Equatable {
         case notAPairingURI
         case unsupportedVersion(Int)
         case missing(field: String)

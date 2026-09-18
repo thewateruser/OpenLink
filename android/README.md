@@ -29,20 +29,20 @@ automatically. The output lands at `app/build/outputs/apk/debug/app-debug.apk`, 
 `.github/workflows/build.yml` builds this APK on every push and attaches it as a downloadable
 artifact, which is the easiest way to get a build without a local Android SDK.
 
-### Why Kotlin 2.1 and Ktor 3.2
+### Why Netty, and why Kotlin 2.1
 
-Both are floors, not preferences:
+- **Netty, not CIO.** Ktor's CIO engine **cannot terminate TLS at all**. Starting an
+  `sslConnector` on it throws `UnsupportedOperationException: CIO Engine does not currently
+  support HTTPS`. Every route here is HTTPS-only, so on CIO the app has no listener and pairing
+  is impossible.
 
-- **Ktor ≥ 3.2** — the embedded server uses the **CIO** engine, and CIO only gained server-side
-  TLS in the 3.2 line. If you pin lower, `sslConnector` will not give you HTTPS.
+  This app originally used CIO, on the confident but entirely wrong belief that Ktor 3.2 had
+  added server-side TLS to it. It compiled fine and failed on every single run. Nothing caught
+  it until an emulator actually launched the app, which is why the instrumented tests in
+  `src/androidTest/` now exist. Netty is heavier on Android, and that is the correct price.
 - **Kotlin 2.x** — Ktor 3 artifacts carry Kotlin 2.0 metadata, which the 1.9 compiler this project
   started on refuses to read. Moving to Kotlin 2.1 also means the Compose compiler is applied as
   its own Gradle plugin (`org.jetbrains.kotlin.plugin.compose`) rather than via `composeOptions`.
-
-If a future Ktor breaks CIO's TLS support, the fallback is two tokens in
-`server/OpenLinkServer.kt` plus one dependency line: swap `ktor-server-cio` → `ktor-server-netty`
-and `CIO` → `Netty`. The `sslConnector` configuration is identical across engines. Netty is
-heavier on Android but its JSSE-backed TLS is well-trodden.
 
 ## Setup on the device
 
@@ -124,7 +124,7 @@ socket becomes unanswerable some minutes after the screen goes off, which presen
 
 ## What's implemented
 
-- **Embedded TLS listener** (`server/OpenLinkServer.kt`, `server/Routes.kt`) — Ktor CIO inside
+- **Embedded TLS listener** (`server/OpenLinkServer.kt`, `server/Routes.kt`) — Ktor Netty inside
   `MonitorForegroundService`, so its lifetime is exactly the lifetime of enforcement. Every route
   in PROTOCOL.md is served: `POST /pair`, `DELETE /pair`, `GET /device`,
   `GET /apps`, `PUT /policies/{packageName}`, `GET|PUT /schedule`, `GET /usage`, `GET /requests`,

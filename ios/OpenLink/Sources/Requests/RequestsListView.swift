@@ -295,7 +295,8 @@ private struct DenyRequestView: View {
                 Text("Asked for \(request.minutesRequested) min")
             }
             Section("Reason (optional)") {
-                TextField("Let them know why", text: $reason, axis: .vertical)
+                // `axis:` is iOS 16+; this app targets 15.1.
+                TextField("Let them know why", text: $reason)
             }
         }
         .navigationTitle("Deny Request")

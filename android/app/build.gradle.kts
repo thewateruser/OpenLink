@@ -54,8 +54,6 @@ android {
     }
 }
 
-// Single source of truth for the Ktor version -- see android/README.md for why 3.2.x is the
-// floor (server-side TLS on the CIO engine).
 val ktorVersion = "3.2.3"
 
 dependencies {
@@ -85,7 +83,11 @@ dependencies {
     // The embedded server the iOS parent app connects to. There is no HTTP *client* in this
     // app at all any more -- nothing is dialled outbound.
     implementation("io.ktor:ktor-server-core:$ktorVersion")
-    implementation("io.ktor:ktor-server-cio:$ktorVersion")
+    // Netty, NOT CIO. CIO cannot terminate TLS at all -- it throws
+    // "CIO Engine does not currently support HTTPS" the moment an sslConnector
+    // starts. This app is HTTPS-only, so CIO is simply not an option. See
+    // android/README.md.
+    implementation("io.ktor:ktor-server-netty:$ktorVersion")
     implementation("io.ktor:ktor-server-websockets:$ktorVersion")
     implementation("io.ktor:ktor-server-content-negotiation:$ktorVersion")
     implementation("io.ktor:ktor-server-status-pages:$ktorVersion")

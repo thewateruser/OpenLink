@@ -6,7 +6,7 @@ import com.openlink.child.domain.ChildRepository
 import com.openlink.child.pairing.ParentRegistry
 import com.openlink.child.prefs.SecurePrefs
 import com.openlink.child.security.TlsIdentity
-import io.ktor.server.cio.CIO
+import io.ktor.server.netty.Netty
 import io.ktor.server.engine.EmbeddedServer
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.engine.sslConnector
@@ -25,11 +25,15 @@ import java.net.ServerSocket
  * (Tailscale/WireGuard) at once, which is what lets docs/PROTOCOL.md have a single code path for
  * "at home" and "away".
  *
- * ENGINE NOTE: this uses Ktor's CIO engine, which only gained server-side TLS in Ktor 3.2 --
- * hence the version floor in app/build.gradle.kts. If a future Ktor makes that untrue, the
- * fallback is one line: swap `ktor-server-cio` for `ktor-server-netty` and `CIO` for `Netty`
- * below. The `sslConnector` configuration is identical across engines. See android/README.md,
- * which is honest about the fact that none of this has been run.
+ * ENGINE NOTE: Netty, and **not** CIO. This is not a preference -- CIO cannot terminate TLS at
+ * all. It throws `UnsupportedOperationException: CIO Engine does not currently support HTTPS`
+ * the moment an `sslConnector` tries to start, and since every route here is HTTPS-only that
+ * leaves the app with no listener whatsoever.
+ *
+ * This was originally written against CIO on the stated belief that Ktor 3.2 had added
+ * server-side TLS to it. That belief was wrong, and nothing caught it until an emulator actually
+ * ran the app: it compiled perfectly and failed at runtime, every time. If you are tempted to
+ * move back to CIO because it is lighter, run the instrumented tests first.
  */
 class OpenLinkServer(context: Context) {
 
@@ -74,7 +78,7 @@ class OpenLinkServer(context: Context) {
 
             val created = try {
                 embeddedServer(
-                    factory = CIO,
+                    factory = Netty,
                     configure = {
                         sslConnector(
                             keyStore = identity.keyStore,

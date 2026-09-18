@@ -57,9 +57,15 @@ targets:
         # — a strictly stronger check than the system trust evaluation this
         # disables. NSAllowsLocalNetworking is declared too so the intent is
         # visible even though arbitrary loads already covers it.
+        # NSAllowsLocalNetworking is deliberately NOT set alongside this. Apple
+        # documents that when NSAllowsArbitraryLoads is combined with
+        # NSAllowsLocalNetworking (or the WebContent/Media keys), the broad key
+        # is IGNORED on iOS 10+ and only the narrower one applies -- which
+        # would have covered the home-Wi-Fi case while silently excluding
+        # overlay addresses like Tailscale's 100.64/10, the whole
+        # away-from-home path. One key, unambiguous.
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
-          NSAllowsLocalNetworking: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: org.openlink.parent
@@ -88,6 +94,7 @@ targets:
       - path: OpenLink/Sources/Model/DeviceEndpoint.swift
       - path: OpenLink/Sources/Networking/CryptoUtil.swift
       - path: OpenLink/Sources/Networking/LocalNetworkAccess.swift
+      - path: OpenLink/Sources/Networking/EndpointFailure.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: org.openlink.parent.tests

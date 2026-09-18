@@ -30,6 +30,19 @@
 import Foundation
 import Network
 
+/// An error that wraps another one. Lets `LocalNetworkAccess` dig a `URLError`
+/// out of the layers this app wraps around it, without the diagnosis code
+/// needing to know about every error type in the project.
+///
+/// This exists because of a bug it would have prevented: the first version of
+/// this file tested `error as? URLError` against what the pairing loop
+/// actually collects, which is a `DeviceConnectionError.unreachable` *wrapping*
+/// the URLError. The cast always failed, so the entire diagnosis below was
+/// dead code that never once ran.
+protocol UnderlyingErrorCarrying {
+    var underlyingError: Error? { get }
+}
+
 /// Why a connection attempt produced "no network path".
 enum LocalNetworkDiagnosis: Equatable {
     /// Not a local-network problem — report the underlying error as-is.
@@ -66,6 +79,21 @@ enum LocalNetworkAccess {
         endpoints.contains { isLocalNetworkAddress($0.host) }
     }
 
+    /// Digs the `URLError` out of however many layers of wrapping this app has
+    /// put around it. Depth-limited because a malformed error chain could
+    /// otherwise cycle.
+    static func urlError(in error: Error, depth: Int = 0) -> URLError? {
+        guard depth < 8 else { return nil }
+        if let urlError = error as? URLError { return urlError }
+        if let carrier = error as? UnderlyingErrorCarrying, let inner = carrier.underlyingError {
+            return urlError(in: inner, depth: depth + 1)
+        }
+        if let inner = (error as NSError).userInfo[NSUnderlyingErrorKey] as? Error {
+            return urlError(in: inner, depth: depth + 1)
+        }
+        return nil
+    }
+
     /// True for the URLError codes iOS reports when it has no path to the
     /// destination, as opposed to reaching it and being refused.
     ///
@@ -73,7 +101,7 @@ enum LocalNetworkAccess {
     /// `.networkConnectionLost` shows up on the same path in some iOS
     /// versions, and is indistinguishable to us.
     static func indicatesNoNetworkPath(_ error: Error) -> Bool {
-        guard let urlError = error as? URLError else { return false }
+        guard let urlError = urlError(in: error) else { return false }
         switch urlError.code {
         case .notConnectedToInternet, .networkConnectionLost, .dataNotAllowed:
             return true

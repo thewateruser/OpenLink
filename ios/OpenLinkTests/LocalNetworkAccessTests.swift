@@ -15,6 +15,12 @@
 
 import XCTest
 
+/// What the pairing loop actually collects: a URLError wrapped in one of this
+/// app's own error types.
+private struct LayeredError: Error, UnderlyingErrorCarrying {
+    let underlyingError: Error?
+}
+
 final class LocalNetworkAccessTests: XCTestCase {
 
     // MARK: - Address classification
@@ -55,6 +61,51 @@ final class LocalNetworkAccessTests: XCTestCase {
         XCTAssertFalse(LocalNetworkAccess.indicatesNoNetworkPath(URLError(.cannotConnectToHost)))
         XCTAssertFalse(LocalNetworkAccess.indicatesNoNetworkPath(URLError(.timedOut)))
         XCTAssertFalse(LocalNetworkAccess.indicatesNoNetworkPath(URLError(.secureConnectionFailed)))
+    }
+
+    // MARK: - Unwrapping
+
+    /// The bug this guards against shipped in v0.3.2 and made the entire
+    /// diagnosis dead code: the classifier tested `error as? URLError`, but
+    /// nothing in this app ever hands it a bare URLError -- the pairing loop
+    /// wraps every one of them in a DeviceConnectionError first. The cast
+    /// always failed, so the "no route" branch never once ran.
+    func testNestedURLErrorsAreFound() {
+        let wrapped = LayeredError(underlyingError: URLError(.notConnectedToInternet))
+        XCTAssertEqual(LocalNetworkAccess.urlError(in: wrapped)?.code, .notConnectedToInternet)
+        XCTAssertTrue(LocalNetworkAccess.indicatesNoNetworkPath(wrapped))
+
+        let twice = LayeredError(underlyingError: wrapped)
+        XCTAssertEqual(LocalNetworkAccess.urlError(in: twice)?.code, .notConnectedToInternet)
+    }
+
+    func testUnwrappingGivesUpRatherThanLooping() {
+        // An error chain that never terminates must not hang the app.
+        final class Cyclic: Error, UnderlyingErrorCarrying {
+            var next: Error?
+            var underlyingError: Error? { next }
+        }
+        let cyclic = Cyclic()
+        cyclic.next = cyclic
+        XCTAssertNil(LocalNetworkAccess.urlError(in: cyclic))
+    }
+
+    func testAWrappedNonNetworkErrorIsNotMistakenForOne() {
+        struct Opaque: Error {}
+        XCTAssertFalse(LocalNetworkAccess.indicatesNoNetworkPath(
+            LayeredError(underlyingError: Opaque())))
+        XCTAssertFalse(LocalNetworkAccess.indicatesNoNetworkPath(
+            LayeredError(underlyingError: nil)))
+    }
+
+    /// The whole path, as the pairing screen sees it.
+    func testAWrappedOfflineErrorOnALANAddressDiagnosesAsPermission() {
+        XCTAssertEqual(
+            LocalNetworkAccess.diagnose(
+                error: LayeredError(underlyingError: URLError(.notConnectedToInternet)),
+                endpoints: [DeviceEndpoint(host: "192.168.1.5", port: 8765, source: .pairingQR)],
+                hasWiFiPath: true),
+            .localNetworkPermission)
     }
 
     // MARK: - Diagnosis

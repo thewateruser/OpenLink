@@ -191,7 +191,20 @@ only way back. The app detects this case and offers a button straight to it.
   unroutable from cellular. The app tells these two cases apart and says
   which one it hit.
 
-If pairing still fails, the QR's addresses are shown on the Android phone's
+If pairing still fails, the iPhone now lists **every address it tried and
+what each one said**, for example:
+
+```
+• 192.168.1.5:8765 — nothing accepted a connection on that port
+• [2001:db8::1]:8765 — iOS reported no route to that address
+```
+
+That first line is the one that matters, and the wording distinguishes the
+causes: *nothing accepted a connection* means the child app's listener isn't
+running or isn't reachable; *no route* means the network or a permission is
+blocking it; *TLS handshake failed* means it was reached but the secure
+connection was refused; *timed out* usually means a firewall silently
+dropping traffic. The QR's addresses are also shown on the Android phone's
 pairing screen — check one of them is on the same subnet as the iPhone.
 
 ## Project status

@@ -22,9 +22,11 @@ enum DeviceConnectionError: LocalizedError {
     case noEndpoints
     case invalidEndpoint(String)
     case unreachable(underlying: Error?)
+    /// Every known address was tried, each with its own reason.
+    case allAddressesFailed(failures: [EndpointFailure])
     /// iOS has no network path to a home-network address — usually the Local
     /// Network permission rather than anything about the device.
-    case localNetworkBlocked(LocalNetworkDiagnosis)
+    case localNetworkBlocked(LocalNetworkDiagnosis, failures: [EndpointFailure])
     case pinningRejected(PinningError)
     case unauthorized
     case http(status: Int, message: String)
@@ -42,10 +44,13 @@ enum DeviceConnectionError: LocalizedError {
                 return "Couldn't reach the device: \(underlying.localizedDescription)"
             }
             return "Couldn't reach the device on any known address."
-        case .localNetworkBlocked(let diagnosis):
+        case .allAddressesFailed(let failures):
+            return EndpointFailureReport.summary(
+                failures, headline: "Couldn't reach the device at any of its known addresses.")
+        case .localNetworkBlocked(let diagnosis, let failures):
             let explanation = LocalNetworkAccess.explanation(for: diagnosis)
                 ?? "Couldn't reach the device."
-            return "Couldn't reach the device.\n\n\(explanation)"
+            return EndpointFailureReport.summary(failures, headline: explanation)
         case .pinningRejected(let error):
             return error.localizedDescription
         case .unauthorized:
@@ -58,6 +63,39 @@ enum DeviceConnectionError: LocalizedError {
             return "Couldn't prepare the request: \(error.localizedDescription)"
         }
     }
+}
+
+extension DeviceConnectionError: UnderlyingErrorCarrying {
+    var underlyingError: Error? {
+        switch self {
+        case .unreachable(let underlying):
+            return underlying
+        case .allAddressesFailed(let failures), .localNetworkBlocked(_, let failures):
+            return EndpointFailureReport.primary(failures)?.error
+        case .decoding(let error), .encoding(let error):
+            return error
+        case .noEndpoints, .invalidEndpoint, .pinningRejected, .unauthorized, .http:
+            return nil
+        }
+    }
+
+    /// True when this is "we couldn't get a reply", as opposed to a reply we
+    /// didn't like. A real answer from the device always wins over any number
+    /// of failed connection attempts.
+    var isTransportFailure: Bool {
+        switch self {
+        case .unreachable, .allAddressesFailed, .localNetworkBlocked, .noEndpoints, .invalidEndpoint:
+            return true
+        case .pinningRejected, .unauthorized, .http, .decoding, .encoding:
+            return false
+        }
+    }
+}
+
+/// Carries which address an attempt was for, so a racing task's failure can
+/// be attributed rather than anonymised into a single `lastError`.
+private struct EndpointAttemptError: Error {
+    let failure: EndpointFailure
 }
 
 /// Best-effort decode of an error body. PROTOCOL.md doesn't define an error
@@ -172,12 +210,18 @@ actor DeviceConnection {
                         let delay = Self.hedgeDelay * Double(index)
                         try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                     }
-                    let info = try await probe(endpoint)
-                    return (endpoint, info)
+                    do {
+                        let info = try await probe(endpoint)
+                        return (endpoint, info)
+                    } catch {
+                        throw EndpointAttemptError(
+                            failure: EndpointFailure(endpoint: endpoint, error: error))
+                    }
                 }
             }
 
-            var lastError: Error?
+            var failures: [EndpointFailure] = []
+            var unattributedError: Error?
             while let result = await group.nextResult() {
                 switch result {
                 case .success(let winner):
@@ -186,8 +230,12 @@ actor DeviceConnection {
                 case .failure(let error):
                     // A losing task cancelled by an earlier success reports
                     // CancellationError; that isn't a real failure reason.
-                    if !(error is CancellationError) {
-                        lastError = error
+                    if let attempt = error as? EndpointAttemptError {
+                        if !(attempt.failure.error is CancellationError) {
+                            failures.append(attempt.failure)
+                        }
+                    } else if !(error is CancellationError) {
+                        unattributedError = error
                     }
                 }
             }
@@ -195,20 +243,26 @@ actor DeviceConnection {
             if let pinningFailure = transport.lastPinningFailure {
                 throw DeviceConnectionError.pinningRejected(pinningFailure)
             }
-            if let connectionError = lastError as? DeviceConnectionError {
-                throw connectionError
+            // The device answering and being unhappy beats any number of
+            // addresses that never answered at all.
+            for failure in failures {
+                if let connectionError = failure.error as? DeviceConnectionError,
+                   !connectionError.isTransportFailure {
+                    throw connectionError
+                }
             }
-            if let lastError {
+            if let primary = EndpointFailureReport.primary(failures) {
                 let diagnosis = LocalNetworkAccess.diagnose(
-                    error: lastError,
-                    endpoints: ordered,
+                    error: primary.error,
+                    endpoints: [primary.endpoint],
                     hasWiFiPath: LocalNetworkMonitor.shared.hasWiFiPath
                 )
                 if diagnosis != .notLocal {
-                    throw DeviceConnectionError.localNetworkBlocked(diagnosis)
+                    throw DeviceConnectionError.localNetworkBlocked(diagnosis, failures: failures)
                 }
+                throw DeviceConnectionError.allAddressesFailed(failures: failures)
             }
-            throw DeviceConnectionError.unreachable(underlying: lastError)
+            throw DeviceConnectionError.unreachable(underlying: unattributedError)
         }
     }
 

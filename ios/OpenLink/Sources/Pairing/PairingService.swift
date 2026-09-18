@@ -23,11 +23,14 @@
 import Foundation
 
 enum PairingError: LocalizedError {
-    case allEndpointsFailed(underlying: Error?)
+    /// Every address in the QR was tried and none worked. Carries ALL of them
+    /// with their individual reasons — see EndpointFailure.swift for why
+    /// keeping only the last one was actively misleading.
+    case allEndpointsFailed(failures: [EndpointFailure])
     /// iOS reported no network path to a home-network address. Its own error
     /// text claims the phone is offline, which is both wrong and a dead end —
     /// see LocalNetworkAccess.swift.
-    case localNetworkBlocked(LocalNetworkDiagnosis)
+    case localNetworkBlocked(LocalNetworkDiagnosis, failures: [EndpointFailure])
     case certificateRejected(PinningError)
     case proofRejected
     case rateLimited
@@ -37,13 +40,14 @@ enum PairingError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .allEndpointsFailed(let underlying):
-            let detail = underlying.map { ": \($0.localizedDescription)" } ?? "."
-            return "Couldn't reach the child device at any address in the QR code\(detail) Make sure both devices are on the same Wi-Fi."
-        case .localNetworkBlocked(let diagnosis):
+        case .allEndpointsFailed(let failures):
+            return EndpointFailureReport.summary(
+                failures,
+                headline: "Couldn't reach the child device at any address in its QR code.")
+        case .localNetworkBlocked(let diagnosis, let failures):
             let explanation = LocalNetworkAccess.explanation(for: diagnosis)
                 ?? "Couldn't reach the child device."
-            return "Couldn't reach the child device.\n\n\(explanation)"
+            return EndpointFailureReport.summary(failures, headline: explanation)
         case .certificateRejected(let error):
             return error.localizedDescription
         case .proofRejected:
@@ -56,6 +60,20 @@ enum PairingError: LocalizedError {
             return "“\(deviceName)” is already paired. Remove it first if you want to pair it again."
         case .keychain(let error):
             return "Paired, but the credentials couldn't be stored securely: \(error.localizedDescription)"
+        }
+    }
+}
+
+extension PairingError: UnderlyingErrorCarrying {
+    var underlyingError: Error? {
+        switch self {
+        case .allEndpointsFailed(let failures), .localNetworkBlocked(_, let failures):
+            return EndpointFailureReport.primary(failures)?.error
+        case .keychain(let error):
+            return error
+        case .certificateRejected, .proofRejected, .rateLimited,
+             .deviceIdMismatch, .alreadyPaired:
+            return nil
         }
     }
 }
@@ -108,8 +126,10 @@ enum PairingService {
         )
         let encoded = try JSONCoding.encoder.encode(body)
 
-        // Step 4, one endpoint at a time.
-        var lastError: Error?
+        // Step 4, one endpoint at a time. Every failure is kept, not just the
+        // most recent: the last address tried is the worst-ranked one, so
+        // overwriting meant reporting the least relevant failure.
+        var failures: [EndpointFailure] = []
         for endpoint in EndpointRanker.rank(uri.endpoints) {
             do {
                 let response = try await postPair(encoded, to: endpoint, using: transport)
@@ -144,26 +164,26 @@ enum PairingService {
                 // the device answered — trying another address won't help.
                 throw error
             } catch {
-                lastError = error
+                failures.append(EndpointFailure(endpoint: endpoint, error: error))
             }
         }
 
         if let pinningFailure = transport.lastPinningFailure {
             throw PairingError.certificateRejected(pinningFailure)
         }
-        // Before blaming the network in general, check for the specific case
-        // where iOS blocked us from the local network and said "offline".
-        if let lastError {
+        // Diagnose the address that was SUPPOSED to work -- the best-ranked
+        // local one -- not whichever happened to be tried last.
+        if let primary = EndpointFailureReport.primary(failures) {
             let diagnosis = LocalNetworkAccess.diagnose(
-                error: lastError,
-                endpoints: uri.endpoints,
+                error: primary.error,
+                endpoints: [primary.endpoint],
                 hasWiFiPath: LocalNetworkMonitor.shared.hasWiFiPath
             )
             if diagnosis != .notLocal {
-                throw PairingError.localNetworkBlocked(diagnosis)
+                throw PairingError.localNetworkBlocked(diagnosis, failures: failures)
             }
         }
-        throw PairingError.allEndpointsFailed(underlying: lastError)
+        throw PairingError.allEndpointsFailed(failures: failures)
     }
 
     private static func postPair(

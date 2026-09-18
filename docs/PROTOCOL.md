@@ -162,8 +162,9 @@ There is deliberately **no remote lock**. See *Deliberate limitations*.
 - `GET /schedule` -> `{ windows: ScheduleWindow[] }`
 - `PUT /schedule` `{ windows: ScheduleWindow[] }` -> `{ windows }`
   Replaces the whole set. `ScheduleWindow` is
-  `{ id?, daysOfWeek (bitmask, bit0=Sunday), startMinute, endMinute, label? }`,
-  minute-of-day in the **device's local time**.
+  `{ id?, daysOfWeek (bitmask, bit0=Sunday), startMinute, endMinute, label?,
+  exemptPackages? }`, minute-of-day in the **device's local time**.
+  `exemptPackages` is the list of packages that window does *not* block.
 
 ### Usage
 - `GET /usage?date=YYYY-MM-DD` -> `{ date, usage: [{ packageName, minutesUsed }] }`
@@ -196,6 +197,19 @@ guess at, and would then disagree about:
 - **A window where `endMinute <= startMinute` wraps past midnight** — this
   is the normal case for a bedtime schedule (e.g. `1320`–`420` is
   22:00–07:00).
+- **`exemptPackages` is optional and defaults to `[]`.** Omitted means the
+  window blocks everything, which is what every window meant before the field
+  existed, so an older parent app and an older child both stay correct. The
+  child bounds what it stores: entries are trimmed, de-duplicated, capped at
+  64 per window, and anything containing a comma is dropped (it cannot be a
+  real package name, and the child stores the list comma-separated).
+- **An exemption is scoped to its own window.** Where two windows overlap, an
+  app must be exempt from **every** active window to get through: the
+  stricter window wins. Otherwise adding a second, tighter window could
+  silently be undone by a permissive one it overlaps.
+- **An exemption is from downtime only.** A hard-blocked app stays blocked,
+  and an exempt app still spends its daily limit — being allowed through
+  bedtime is not a licence to use an app all night.
 - **Errors** are `{ "error": "<human-readable message>" }` with a meaningful
   HTTP status. `401` means the token is bad or revoked and the parent should
   surface a re-pair prompt; `409` means the request was already answered by

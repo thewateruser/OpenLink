@@ -151,6 +151,10 @@ socket becomes unanswerable some minutes after the screen goes off, which presen
 - **Enforcement** (`enforcement/`) — `EnforcementEngine` implements the three rules (hard block >
   downtime > per-app limit, with the always-allowed list exempt from all of them);
   `EnforcementRepository` is the in-memory cache the accessibility service reads synchronously.
+  Each downtime window also carries its own `exemptPackages` allow-list. An exemption is scoped
+  to the window that grants it — where windows overlap, an app must be exempt from every active
+  one to get through — and it exempts from downtime only: a hard block still wins, and an exempt
+  app still spends its daily limit. `test/.../DowntimeExemptionTest.kt` pins all of that.
 - **Blocking overlay** — `PolicyForegroundAccessibilityService` draws a full-screen,
   back-button-proof `TYPE_ACCESSIBILITY_OVERLAY`. See the design note at the top of that file for
   why this beats a plain `Service` + `SYSTEM_ALERT_WINDOW`.
@@ -199,17 +203,21 @@ traffic at all now, and what this app *hosts* is TLS-only.
 - **No key rotation.** The identity is generated once and pinned forever. A factory reset or an
   app reinstall means re-pairing every parent, and there is no story for rotating a key that is
   suspected compromised other than "pair again in person".
-- **No Room migrations** — `fallbackToDestructiveMigration()` is still set. This mattered less
-  when the database was a cache of server state. It matters a lot now: this database *is* the
-  policy. It is tolerable only because v1 databases belong to the deleted architecture. The next
-  schema change needs a real `Migration`.
+- **Room migrations start at v2** — v2 -> v3 (the downtime allow-list) is a real `Migration`,
+  as the previous note said the next schema change would need. `fallbackToDestructiveMigration()`
+  is still set for v1 only, which belongs to the deleted server-based architecture and carries
+  nothing worth keeping. Every schema change from here needs its own `Migration`: this database
+  *is* the policy, so dropping it would throw away every limit, schedule and usage tally the
+  family has set up.
 - **`respondedAt`-based "today" matching for granted minutes is UTC-date-based**
   (`TimeRequestDao.getApprovedGrantedForDate`), so it can be off by up to the device's UTC offset
   right at local midnight.
-- **Enforcement semantics are now undocumented outside the code.** They used to live in
+- **Most enforcement semantics are still undocumented outside the code.** They used to live in
   `docs/API.md`, which went away with the server; `docs/PROTOCOL.md` deliberately covers only the
-  wire contract. The rules are written up in `EnforcementEngine.kt`'s KDoc, but a protocol
-  document that a second implementation could be built from should probably state them.
+  wire contract, though it now also states how `exemptPackages` combines, since that is a rule
+  two implementations could disagree about. The rest — rule precedence, how granted minutes
+  extend a limit — is written up only in `EnforcementEngine.kt`'s KDoc, and a protocol document
+  that a second implementation could be built from should state it.
 - **No event for "enforcement was turned off".** If the child disables the accessibility service,
   blocking silently stops, and PROTOCOL.md's event list has no type to tell a parent so — which is
   exactly the thing a parent would most want to know. Inventing one the iOS app doesn't know about

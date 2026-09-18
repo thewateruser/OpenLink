@@ -108,7 +108,9 @@ need it. An overlay network solves the same problem reliably.
 
 - **Per-app daily time limits**, in minutes.
 - **Hard blocking** — some apps off-limits regardless of time left.
-- **Downtime schedules** — recurring windows like school nights 9pm–7am.
+- **Downtime schedules** — recurring windows like school nights 9pm–7am,
+  each with its own allow-list, so the phone and messages keep working
+  through bedtime while everything else stops.
 - **"Ask for more time"** — the kid requests extra minutes with a message;
   the parent approves a specific number of minutes, or denies.
 - **Multiple parents** — several iPhones can pair with one child phone, each

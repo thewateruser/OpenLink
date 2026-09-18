@@ -259,17 +259,29 @@ struct ScheduleWindow: Codable, Identifiable, Equatable {
     var startMinute: Int
     var endMinute: Int
     var label: String?
+    /// Packages this window lets through — the phone, messages, an alarm.
+    /// Scoped to the window, not the device, so a permissive bedtime window
+    /// and a strict homework one don't leak into each other.
+    var exemptPackages: [String] = []
 
     var id: String { remoteId ?? clientId }
 
     private enum CodingKeys: String, CodingKey {
         case remoteId = "id"
-        case daysOfWeek, startMinute, endMinute, label
+        case daysOfWeek, startMinute, endMinute, label, exemptPackages
     }
 
-    init(remoteId: String? = nil, daysOfWeek: Int, startMinute: Int, endMinute: Int, label: String? = nil) {
+    init(
+        remoteId: String? = nil,
+        daysOfWeek: Int,
+        startMinute: Int,
+        endMinute: Int,
+        label: String? = nil,
+        exemptPackages: [String] = []
+    ) {
         self.remoteId = remoteId
         self.daysOfWeek = daysOfWeek
+        self.exemptPackages = exemptPackages
         self.startMinute = startMinute
         self.endMinute = endMinute
         self.label = label
@@ -292,6 +304,11 @@ struct ScheduleWindow: Codable, Identifiable, Equatable {
         startMinute = try container.decode(Int.self, forKey: .startMinute)
         endMinute = try container.decode(Int.self, forKey: .endMinute)
         label = try container.decodeIfPresent(String.self, forKey: .label)
+        // Absent on a child device that predates the feature, and on every
+        // window saved before it existed. "No exemptions" is exactly what
+        // those windows meant, so this is the right default rather than a
+        // lenient one.
+        exemptPackages = try container.decodeIfPresent([String].self, forKey: .exemptPackages) ?? []
     }
 
     func encode(to encoder: Encoder) throws {
@@ -307,6 +324,11 @@ struct ScheduleWindow: Codable, Identifiable, Equatable {
         try container.encode(startMinute, forKey: .startMinute)
         try container.encode(endMinute, forKey: .endMinute)
         try container.encodeIfPresent(label, forKey: .label)
+        // Always encoded, including when empty: `PUT /schedule` replaces the
+        // whole set, so an omitted list and an empty one mean the same thing
+        // to the child — but sending it explicitly makes "I removed every
+        // exemption" legible on the wire.
+        try container.encode(exemptPackages, forKey: .exemptPackages)
     }
 
     static let dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]

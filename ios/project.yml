@@ -92,6 +92,7 @@ targets:
       - path: OpenLinkTests
       - path: OpenLink/Sources/Pairing/PairingURI.swift
       - path: OpenLink/Sources/Model/DeviceEndpoint.swift
+      - path: OpenLink/Sources/Model/ProtocolModels.swift
       - path: OpenLink/Sources/Networking/CryptoUtil.swift
       - path: OpenLink/Sources/Networking/LocalNetworkAccess.swift
       - path: OpenLink/Sources/Networking/EndpointFailure.swift

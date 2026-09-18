@@ -77,7 +77,14 @@ data class ScheduleWindowDto(
     val daysOfWeek: Int,
     val startMinute: Int,
     val endMinute: Int,
-    val label: String? = null
+    val label: String? = null,
+    /**
+     * Packages this window lets through -- the phone, messages, an alarm.
+     *
+     * Defaulted so a parent app that predates the field still round-trips: absent decodes to
+     * "no exemptions", which is what every window did before it existed.
+     */
+    val exemptPackages: List<String> = emptyList()
 )
 
 @Serializable

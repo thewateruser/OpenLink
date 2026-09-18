@@ -68,7 +68,11 @@ class MainActivity : ComponentActivity() {
                     composable("home") {
                         HomeScreen(
                             initialRequestPackage = requestedPackage,
-                            onOpenSettings = { navController.navigate("settings") }
+                            onOpenSettings = { navController.navigate("settings") },
+                            // Reachable from the home screen too, not just the first-run flow:
+                            // a device that was set up and never paired otherwise has no way
+                            // back to the QR short of digging through Settings.
+                            onShowPairingCode = { navController.navigate("pairing") }
                         )
                     }
                     composable("away") {

@@ -22,6 +22,9 @@ enum DeviceConnectionError: LocalizedError {
     case noEndpoints
     case invalidEndpoint(String)
     case unreachable(underlying: Error?)
+    /// iOS has no network path to a home-network address — usually the Local
+    /// Network permission rather than anything about the device.
+    case localNetworkBlocked(LocalNetworkDiagnosis)
     case pinningRejected(PinningError)
     case unauthorized
     case http(status: Int, message: String)
@@ -39,6 +42,10 @@ enum DeviceConnectionError: LocalizedError {
                 return "Couldn't reach the device: \(underlying.localizedDescription)"
             }
             return "Couldn't reach the device on any known address."
+        case .localNetworkBlocked(let diagnosis):
+            let explanation = LocalNetworkAccess.explanation(for: diagnosis)
+                ?? "Couldn't reach the device."
+            return "Couldn't reach the device.\n\n\(explanation)"
         case .pinningRejected(let error):
             return error.localizedDescription
         case .unauthorized:
@@ -190,6 +197,16 @@ actor DeviceConnection {
             }
             if let connectionError = lastError as? DeviceConnectionError {
                 throw connectionError
+            }
+            if let lastError {
+                let diagnosis = LocalNetworkAccess.diagnose(
+                    error: lastError,
+                    endpoints: ordered,
+                    hasWiFiPath: LocalNetworkMonitor.shared.hasWiFiPath
+                )
+                if diagnosis != .notLocal {
+                    throw DeviceConnectionError.localNetworkBlocked(diagnosis)
+                }
             }
             throw DeviceConnectionError.unreachable(underlying: lastError)
         }

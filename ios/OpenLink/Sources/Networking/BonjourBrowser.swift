@@ -67,15 +67,17 @@ final class BonjourBrowser: ObservableObject {
                 case .ready:
                     self.isBrowsing = true
                     self.permissionDenied = false
-                case .failed, .cancelled:
+                case .cancelled:
                     self.isBrowsing = false
+                case .failed(let error):
+                    self.isBrowsing = false
+                    self.permissionDenied = Self.isPermissionDenial(error)
                 case .waiting(let error):
-                    // On iOS 14+ a missing local-network permission surfaces
-                    // here rather than as an outright failure.
+                    // A missing local-network permission can surface either
+                    // here or as an outright failure, depending on iOS
+                    // version, so both are checked the same way.
                     self.isBrowsing = false
-                    if case .posix(let code) = error, code == .EPERM || code == .EACCES {
-                        self.permissionDenied = true
-                    }
+                    self.permissionDenied = Self.isPermissionDenial(error)
                 default:
                     break
                 }
@@ -90,6 +92,25 @@ final class BonjourBrowser: ObservableObject {
 
         self.browser = browser
         browser.start(queue: .main)
+    }
+
+    /// Whether an NWBrowser error is iOS refusing local-network access.
+    ///
+    /// This is a HINT for the pre-scan banner, not the basis of any hard
+    /// claim: the error shape differs across iOS versions, and a browser can
+    /// also sit in `.waiting` for perfectly ordinary reasons. The actionable
+    /// diagnosis comes from the -1009 a real connection attempt returns
+    /// (LocalNetworkAccess.swift), which is stable.
+    private static func isPermissionDenial(_ error: NWError) -> Bool {
+        switch error {
+        case .posix(let code):
+            return code == .EPERM || code == .EACCES
+        case .dns(let code):
+            // kDNSServiceErr_PolicyDenied from dns_sd.h.
+            return code == -65570
+        default:
+            return false
+        }
     }
 
     func stop() {

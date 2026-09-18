@@ -140,6 +140,33 @@ There is no entitlements file any more.
 8. **Manual endpoint entry** (`Devices/EndpointsView.swift`) — the escape
    hatch for typing a Tailscale hostname directly.
 
+## Local network privacy
+
+Since iOS 14 an app cannot reach anything on the local network without the
+user granting **Local Network** access, and this app's entire job is reaching
+something on the local network. Three consequences worth knowing:
+
+- **The prompt is raised by `BonjourBrowser`, not by `URLSession`.** Only
+  Network.framework and multicast APIs trigger it; a plain `URLSession`
+  request to a LAN address never does — it just fails. `AppState.startAll()`
+  therefore starts the browser at launch, before anything needs it, so the
+  prompt happens while the user is looking at the welcome screen rather than
+  mid-pairing.
+- **iOS asks exactly once, and an app cannot ask again.** After a denial the
+  only route back is Settings, so `PairDeviceView` offers a direct link there
+  instead of a message the user can't act on.
+- **The failure is reported as `NSURLErrorNotConnectedToInternet` (-1009),**
+  i.e. "The Internet connection appears to be offline" — on a phone that is
+  plainly online. `LocalNetworkAccess.swift` exists to translate that: it
+  fires only when the error means "no path" *and* the addresses tried were
+  local, and it uses `NWPathMonitor` (which needs no permission) to
+  distinguish a missing permission from an iPhone that simply isn't on Wi-Fi.
+  `OpenLinkTests/LocalNetworkAccessTests.swift` pins those boundaries.
+
+`NSLocalNetworkUsageDescription` and `NSBonjourServices` are both declared in
+`project.yml`; without the service declaration the browser is refused even
+when the user has granted access.
+
 ## No push notifications
 
 There is categorically no APNs path here (PROTOCOL.md, "Deliberate

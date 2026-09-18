@@ -24,6 +24,10 @@ import Foundation
 
 enum PairingError: LocalizedError {
     case allEndpointsFailed(underlying: Error?)
+    /// iOS reported no network path to a home-network address. Its own error
+    /// text claims the phone is offline, which is both wrong and a dead end —
+    /// see LocalNetworkAccess.swift.
+    case localNetworkBlocked(LocalNetworkDiagnosis)
     case certificateRejected(PinningError)
     case proofRejected
     case rateLimited
@@ -36,6 +40,10 @@ enum PairingError: LocalizedError {
         case .allEndpointsFailed(let underlying):
             let detail = underlying.map { ": \($0.localizedDescription)" } ?? "."
             return "Couldn't reach the child device at any address in the QR code\(detail) Make sure both devices are on the same Wi-Fi."
+        case .localNetworkBlocked(let diagnosis):
+            let explanation = LocalNetworkAccess.explanation(for: diagnosis)
+                ?? "Couldn't reach the child device."
+            return "Couldn't reach the child device.\n\n\(explanation)"
         case .certificateRejected(let error):
             return error.localizedDescription
         case .proofRejected:
@@ -142,6 +150,18 @@ enum PairingService {
 
         if let pinningFailure = transport.lastPinningFailure {
             throw PairingError.certificateRejected(pinningFailure)
+        }
+        // Before blaming the network in general, check for the specific case
+        // where iOS blocked us from the local network and said "offline".
+        if let lastError {
+            let diagnosis = LocalNetworkAccess.diagnose(
+                error: lastError,
+                endpoints: uri.endpoints,
+                hasWiFiPath: LocalNetworkMonitor.shared.hasWiFiPath
+            )
+            if diagnosis != .notLocal {
+                throw PairingError.localNetworkBlocked(diagnosis)
+            }
         }
         throw PairingError.allEndpointsFailed(underlying: lastError)
     }

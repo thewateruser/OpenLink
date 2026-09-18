@@ -46,6 +46,10 @@ final class AppState: ObservableObject {
 
     /// Called on launch and whenever the app becomes active.
     func startAll() {
+        // Needs no permission and raises no prompt; it only tells us whether a
+        // Wi-Fi path exists, which is what separates "you're not on Wi-Fi"
+        // from "Local Network access is off" when a connection fails.
+        LocalNetworkMonitor.shared.start()
         bonjour.start()
         registry.startAll()
         registry.updateLocalNetworkPresence(using: bonjour)

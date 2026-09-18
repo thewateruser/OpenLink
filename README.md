@@ -25,10 +25,17 @@ because there is nowhere for it to go.
    to see which app is in the foreground and for how long; that's how limits
    work at all.
 4. **Pair them.** The Android phone shows a QR code. Scan it with the iPhone
-   app, with both phones on the same Wi-Fi. That's the whole setup.
+   app, with both phones on the same Wi-Fi.
+5. **Say yes when iPhone asks for "Local Network" access.** Without it iOS
+   silently blocks the app from reaching anything on your Wi-Fi, and pairing
+   cannot work. It only asks once — see [Troubleshooting](#troubleshooting)
+   if you missed it.
 
 After pairing, the iPhone app lists the child's apps and you set limits from
 there.
+
+No router configuration is needed. Nothing is forwarded, opened or exposed
+to the internet: the child listens on port 8765 on your own network only.
 
 ### Using it away from home
 
@@ -151,6 +158,41 @@ provisioning profile that CI doesn't have. Your options:
 - **[TrollStore](https://github.com/opa334/TrollStore)** — permanent, but only
   on the iOS versions it supports.
 - **Xcode** — open `ios/` and run it straight onto your own device.
+
+## Troubleshooting
+
+### "Couldn't reach the child device" / "The Internet connection appears to be offline"
+
+Almost always **Local Network permission** on the iPhone, even though the
+message says otherwise. Since iOS 14 an app can't talk to anything on your
+Wi-Fi without it, and the failure iOS reports is this misleading "you're
+offline" — which is obviously wrong when you're reading this over that same
+Wi-Fi.
+
+Fix it in **Settings → OpenLink → Local Network** (or Settings → Privacy &
+Security → Local Network → OpenLink). **iOS only asks once**, at first
+launch, and no app can ask again — so if you tapped "Don't Allow", or the
+prompt appeared while you were looking at something else, Settings is the
+only way back. The app detects this case and offers a button straight to it.
+
+### Other things that block device-to-device traffic
+
+- **Guest Wi-Fi, or "AP isolation" / "client isolation"** on the router.
+  These exist specifically to stop devices on the network from talking to
+  each other, which is exactly what OpenLink does. Put both phones on the
+  main network, or turn the setting off.
+- **A VPN on the iPhone.** A full-tunnel VPN can swallow local addresses.
+  Turn it off for the pairing step. (Tailscale is fine — it's how the
+  [away from home](#using-it-away-from-home) path works.)
+- **Different networks that look like one.** Some mesh and dual-band setups
+  put guest/IoT bands on an isolated segment. Check both phones show the
+  same network name *and* similar addresses (both `192.168.1.x`, say).
+- **The iPhone on cellular.** A home address like `192.168.1.5` is
+  unroutable from cellular. The app tells these two cases apart and says
+  which one it hit.
+
+If pairing still fails, the QR's addresses are shown on the Android phone's
+pairing screen — check one of them is on the same subnet as the iPhone.
 
 ## Project status
 

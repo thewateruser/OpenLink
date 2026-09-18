@@ -20,6 +20,9 @@ struct PairDeviceView: View {
     @State private var phase: Phase = .scanning
     @State private var errorMessage: String?
     @State private var scannedName: String?
+    /// Set when the failure was iOS refusing us the local network, which the
+    /// user can only fix in Settings — so the error gets a way to get there.
+    @State private var offersLocalNetworkSettings = false
 
     private enum Phase: Equatable {
         case scanning
@@ -49,11 +52,19 @@ struct PairDeviceView: View {
             }
 
             if let errorMessage {
-                Text(errorMessage)
-                    .font(.footnote)
-                    .foregroundStyle(.red)
-                    .multilineTextAlignment(.center)
-                    .padding()
+                VStack(spacing: 10) {
+                    Text(errorMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                        .multilineTextAlignment(.center)
+                    if offersLocalNetworkSettings,
+                       let url = URL(string: UIApplication.openSettingsURLString) {
+                        Link("Open Settings", destination: url)
+                            .buttonStyle(.borderedProminent)
+                            .font(.footnote)
+                    }
+                }
+                .padding()
             }
 
             footer
@@ -145,6 +156,21 @@ struct PairDeviceView: View {
         VStack(spacing: 12) {
             switch phase {
             case .scanning:
+                if appState.bonjour.permissionDenied {
+                    // Known before the scan even happens, so say it now
+                    // rather than after a handshake that cannot succeed.
+                    VStack(spacing: 8) {
+                        Text("Local Network access is off for OpenLink. Pairing can't reach the child device without it.")
+                            .font(.footnote)
+                            .foregroundStyle(.orange)
+                            .multilineTextAlignment(.center)
+                        if let url = URL(string: UIApplication.openSettingsURLString) {
+                            Link("Open Settings", destination: url)
+                                .buttonStyle(.bordered)
+                                .font(.footnote)
+                        }
+                    }
+                }
                 Text("On the child's Android device open OpenLink → Pair a parent, and point this camera at the QR code it shows.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
@@ -182,6 +208,7 @@ struct PairDeviceView: View {
         }
 
         errorMessage = nil
+        offersLocalNetworkSettings = false
         scannedName = uri.deviceName
         phase = .pairing
 
@@ -192,9 +219,20 @@ struct PairDeviceView: View {
                 onPaired?(deviceId)
             } catch {
                 errorMessage = error.localizedDescription
+                offersLocalNetworkSettings = Self.isLocalNetworkBlock(error)
                 phase = .scanning
             }
         }
         return true
+    }
+
+    private static func isLocalNetworkBlock(_ error: Error) -> Bool {
+        if let pairing = error as? PairingError, case .localNetworkBlocked = pairing {
+            return true
+        }
+        if let connection = error as? DeviceConnectionError, case .localNetworkBlocked = connection {
+            return true
+        }
+        return false
     }
 }

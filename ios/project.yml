@@ -87,6 +87,7 @@ targets:
       - path: OpenLink/Sources/Pairing/PairingURI.swift
       - path: OpenLink/Sources/Model/DeviceEndpoint.swift
       - path: OpenLink/Sources/Networking/CryptoUtil.swift
+      - path: OpenLink/Sources/Networking/LocalNetworkAccess.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: org.openlink.parent.tests

@@ -67,6 +67,13 @@ class OpenLinkServer(context: Context) {
             return null
         }
 
+        // Why the loop records this: a start() failure that is *not* a port conflict (a TLS
+        // misconfiguration, an engine that cannot run here) makes every candidate fail, and the
+        // loop then falls through to "no free port" -- a diagnosis that is both wrong and
+        // untraceable. Keeping the last real exception means the failure reported to the pairing
+        // screen names what actually broke.
+        var lastStartFailure: Throwable? = null
+
         for (candidate in DEFAULT_PORT until DEFAULT_PORT + PORT_ATTEMPTS) {
             if (!isPortAvailable(candidate)) continue
 
@@ -96,8 +103,9 @@ class OpenLinkServer(context: Context) {
                 ).also { it.start(wait = false) }
             } catch (e: Throwable) {
                 // Between the availability probe and the bind, something else may have taken
-                // the port; try the next one.
-                Log.w(TAG, "Could not bind port $candidate: ${e.javaClass.simpleName}")
+                // the port; try the next one. Anything else is a real fault, so keep it.
+                lastStartFailure = e
+                Log.w(TAG, "Could not start listener on port $candidate", e)
                 null
             }
 
@@ -119,8 +127,11 @@ class OpenLinkServer(context: Context) {
             }
         }
 
-        val message = "No free port in $DEFAULT_PORT..${DEFAULT_PORT + PORT_ATTEMPTS - 1}"
-        Log.e(TAG, message)
+        val range = "$DEFAULT_PORT..${DEFAULT_PORT + PORT_ATTEMPTS - 1}"
+        val message = lastStartFailure
+            ?.let { "The listener could not start: ${it.javaClass.name}: ${it.message}" }
+            ?: "No free port in $range"
+        Log.e(TAG, message, lastStartFailure)
         ServerState.onFailed(message)
         return null
     }

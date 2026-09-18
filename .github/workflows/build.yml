@@ -117,7 +117,18 @@ jobs:
           profile: pixel_6
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: cd android && ./gradlew connectedDebugAndroidTest --stacktrace
+          # Dump the app's logcat on failure. Without it a runtime fault reaches
+          # us as only an assertion message, and the stack trace that says what
+          # actually broke dies with the emulator.
+          script: |
+            cd android
+            ./gradlew connectedDebugAndroidTest --stacktrace || {
+              echo "=== logcat (OpenLink) ==="
+              adb logcat -d -v brief \
+                OpenLinkServer:V MonitorService:V TlsIdentity:V AndroidRuntime:E System.err:W '*:S' \
+                | tail -200
+              exit 1
+            }
 
       - name: Upload test reports
         if: always()

@@ -48,22 +48,52 @@ class MonitorForegroundService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private lateinit var repository: ChildRepository
+
+    /** Written from the IO scope in onCreate, read on the main thread in onDestroy. */
+    @Volatile
     private var server: OpenLinkServer? = null
     private var wifiLock: WifiManager.WifiLock? = null
 
+    /**
+     * Ordering here is load-bearing, and was the cause of the app appearing to do nothing after
+     * permissions were granted.
+     *
+     * `startForeground()` must be reached within ~5s of `startForegroundService()`, and before
+     * anything that can block or throw -- otherwise the process dies with either
+     * ForegroundServiceDidNotStartInTimeException or whatever threw first. So it goes first, and
+     * everything after it is best-effort: a failure degrades the app rather than killing it.
+     *
+     * Generating the Keystore key and binding the TLS socket are also both slow enough to ANR on
+     * the main thread, so the listener starts on IO. The pairing screen already renders a waiting
+     * state until [ServerState] reports a bound port, and an error panel if it reports a failure,
+     * so starting asynchronously is what that UI was written to expect.
+     */
     override fun onCreate() {
         super.onCreate()
-        repository = ChildRepository.getInstance(applicationContext)
 
         startForegroundWithNotification()
-        acquireWifiLock()
+
+        repository = ChildRepository.getInstance(applicationContext)
 
         scope.launch {
-            repository.primeEnforcement()
-            repository.pruneOldData()
-        }
+            runCatching { acquireWifiLock() }
+                .onFailure { Log.w(TAG, "Wi-Fi lock unavailable: ${it.javaClass.simpleName}") }
 
-        server = OpenLinkServer(applicationContext).also { it.start() }
+            runCatching {
+                repository.primeEnforcement()
+                repository.pruneOldData()
+            }.onFailure { Log.e(TAG, "Could not prime enforcement: ${it.javaClass.simpleName}") }
+
+            // Assign before starting, so onDestroy can always stop whatever was created even if
+            // start() is still in flight.
+            runCatching { OpenLinkServer(applicationContext).also { server = it }.start() }
+                .onFailure {
+                    Log.e(TAG, "Listener failed to start: ${it.javaClass.simpleName}")
+                    ServerState.onFailed(
+                        "The connection listener could not start (${it.javaClass.simpleName})."
+                    )
+                }
+        }
 
         scope.launch { usagePollLoop() }
         scope.launch { deviceStateLoop() }
@@ -77,10 +107,12 @@ class MonitorForegroundService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        // Cancel first so nothing new starts, then tear down what exists. start() assigns
+        // `server` before binding, so an in-flight startup is still stoppable here.
+        scope.cancel()
         server?.stop()
         server = null
         releaseWifiLock()
-        scope.cancel()
         super.onDestroy()
     }
 
@@ -110,7 +142,13 @@ class MonitorForegroundService : Service() {
             .setContentIntent(pendingIntent)
             .build()
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        // FOREGROUND_SERVICE_TYPE_SPECIAL_USE and the manifest's `specialUse` value both arrived
+        // in API 34. Passing the constant on API 29..33 is not merely ignored: the platform
+        // checks it against the types it parsed from the manifest, finds `specialUse` unknown
+        // there, and throws IllegalArgumentException -- which killed the service in onCreate and
+        // took the app down the instant the user tapped Continue. Below 34 the untyped overload
+        // is the correct call, and is valid on every version this app supports.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         } else {
             startForeground(NOTIFICATION_ID, notification)

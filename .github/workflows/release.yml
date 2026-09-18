@@ -231,10 +231,25 @@ jobs:
           were visible to a compiler, and none to a check that only proved the
           listener bound a port.
 
-          **Upgrading:** a device that already generated an unusable key
-          replaces it automatically on next launch — no reinstall needed. Its
-          certificate fingerprint changes, so any QR shown earlier is stale;
-          show a fresh one.
+          **New in v0.5.0 — downtime allow-lists.** Each downtime window now
+          carries its own list of apps it lets through, so "22:00–07:00, but
+          the phone and messages still work" is expressible. Set it per window
+          from the iPhone: tap a window, then **Always allowed**. Two rules
+          worth knowing, both enforced and tested: where windows overlap an
+          app must be exempt from *every* active one to get through (the
+          stricter window wins), and an exemption is from downtime only — a
+          hard-blocked app stays blocked, and an exempt app still spends its
+          daily limit.
+
+          **Upgrading:** nothing to do. Existing downtime windows keep
+          blocking everything, which is what they already did, and the
+          database upgrade that adds the field is a real migration — every
+          limit, schedule and usage tally is carried across, and an emulator
+          test does that upgrade on a database with real rows in it on every
+          push. Separately, a device still holding a TLS key from before
+          v0.4.0 replaces it automatically on next launch; its certificate
+          fingerprint changes with it, so show a fresh QR rather than reusing
+          an old one.
 
           See [`docs/PROTOCOL.md`](docs/PROTOCOL.md) for the protocol and security
           model, and the per-app READMEs for known gaps.

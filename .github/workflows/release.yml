@@ -200,25 +200,41 @@ jobs:
           ## Status — please read
 
           **What is verified:** every push boots an Android emulator on two API
-          levels and asserts the app starts — the background service comes up,
-          the TLS listener binds a port, and it reports a reachable address.
-          The iOS app is compile-checked against the current SDK, and its
-          pairing-QR parser is unit-tested on a simulator against the exact
-          strings the Android app produces (both apps' tests share fixtures,
-          so the two halves can't drift apart silently).
+          levels and runs the **whole pairing handshake** against the real
+          listener, with a client built the way the iPhone's is — trusting
+          nothing but a certificate matching the published fingerprint. It
+          asserts TLS actually completes, that the certificate served is the
+          one the QR advertises, that a valid proof returns a token, that a
+          wrong proof is refused, and that a client pinning the wrong
+          certificate cannot connect at all. The iOS app is compile-checked
+          against the current SDK, and its pairing-QR parser and connection
+          diagnostics are unit-tested on a simulator against the exact strings
+          the Android app produces.
 
-          **What is not:** completing a pairing handshake with a real iPhone,
-          certificate pinning against the live certificate, the blocking
-          overlay, and downtime schedules have no automated coverage. Expect
-          bugs there, and don't rely on this for a rule that actually matters
-          yet.
+          **What is not:** the iPhone's own client has never completed a
+          handshake against a real device in an automated test — the Android
+          half is now covered end to end, the pairing of the two halves is
+          not. The blocking overlay and downtime schedules have no coverage
+          either. Expect bugs there.
 
-          Those tests exist because four separate bugs shipped in builds where
-          every check was green — a crash on Android 10–13, an HTTP engine that
-          cannot do TLS, a TLS setup that could never load the device's key, and
-          a pairing QR that every IPv6-capable iPhone refused to read. None were
-          visible to a compiler; each one needed something to actually run the
-          code.
+          That handshake test exists because of what it found the first time it
+          ran, which is the headline fix in v0.4.0: **the child device had
+          never completed a TLS handshake with anything, on any network.** Its
+          identity key was generated authorising SHA-256/384/512 but not
+          `DIGEST_NONE`, and Android's TLS stack hashes the handshake itself
+          and then asks the key to sign those bytes raw — so the keystore
+          refused, every single time, and the peer saw only a closed
+          connection. Five separate bugs have now shipped in builds where every
+          check was green: a crash on Android 10–13, an HTTP engine that cannot
+          do TLS, a TLS setup that could never load the device's key, a pairing
+          QR that every IPv6-capable iPhone refused to read, and this. None
+          were visible to a compiler, and none to a check that only proved the
+          listener bound a port.
+
+          **Upgrading:** a device that already generated an unusable key
+          replaces it automatically on next launch — no reinstall needed. Its
+          certificate fingerprint changes, so any QR shown earlier is stale;
+          show a fresh one.
 
           See [`docs/PROTOCOL.md`](docs/PROTOCOL.md) for the protocol and security
           model, and the per-app READMEs for known gaps.

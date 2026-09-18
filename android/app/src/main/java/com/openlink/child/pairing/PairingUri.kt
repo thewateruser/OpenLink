@@ -10,9 +10,14 @@ import java.net.URLEncoder
  * openlink://pair?v=1&id=<deviceId>&name=<url-encoded>&fp=<b64url>&psk=<b64url>&ep=<host:port,...>
  * ```
  *
- * `fp`, `psk` and `id` are already base64url (URL-safe, unpadded) so they need no escaping;
- * `name` is arbitrary user text and `ep` contains `:` and `,` separators that must survive, so
- * only `name` is percent-encoded.
+ * `fp`, `psk` and `id` are already base64url (URL-safe, unpadded) so they need no escaping.
+ * `name` is arbitrary user text and is percent-encoded in full.
+ *
+ * `ep` keeps its `:` and `,` separators, which RFC 3986 allows in a query, but its **brackets
+ * are escaped**. An IPv6 endpoint is bracketed (`[2001:db8::1]:8765`) and `[`/`]` are gen-delims
+ * the grammar permits only inside a host, so a strict URL parser may reject the whole string.
+ * That is not hypothetical: it made every scan on an IPv6-capable phone fail with "that isn't an
+ * OpenLink pairing code", blaming a QR that was correct.
  */
 object PairingUri {
 
@@ -31,6 +36,8 @@ object PairingUri {
         // parser on the other side.
         val safeName = name.replace("+", "%20")
         val ep = endpoints.joinToString(",")
+            .replace("[", "%5B")
+            .replace("]", "%5D")
         return buildString {
             append("openlink://pair?v=").append(VERSION)
             append("&id=").append(deviceId)

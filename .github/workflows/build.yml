@@ -55,6 +55,13 @@ jobs:
           key: gradle-${{ hashFiles('android/**/*.gradle.kts', 'android/gradle/wrapper/gradle-wrapper.properties') }}
           restore-keys: gradle-
 
+      # JVM unit tests run here rather than in the emulator job: they take
+      # seconds, and the pairing-URI grammar checks they cover would otherwise
+      # only fail on a physical iPhone, as a scan that mysteriously refuses.
+      - name: Run unit tests
+        working-directory: android
+        run: ./gradlew testDebugUnitTest --stacktrace
+
       - name: Build debug APK
         working-directory: android
         run: ./gradlew assembleDebug --stacktrace

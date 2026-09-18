@@ -11,6 +11,8 @@ import java.security.cert.X509Certificate
 import java.security.spec.ECGenParameterSpec
 import java.util.Date
 import java.util.concurrent.TimeUnit
+import javax.net.ssl.KeyManagerFactory
+import javax.net.ssl.SSLContext
 import javax.security.auth.x500.X500Principal
 
 /**
@@ -60,11 +62,31 @@ class TlsIdentity private constructor(
         private const val VALIDITY_YEARS = 20L
 
         /**
-         * Ktor's `sslConnector` asks for a keystore password and a private-key password. An
-         * AndroidKeyStore entry has neither (access control is the keystore's own, not a
-         * passphrase), so every call site passes this empty array.
+         * An `SSLContext` whose server key is this device's AndroidKeyStore entry.
+         *
+         * This exists because Ktor's `sslConnector` cannot be used here at all. Given a keystore
+         * it pulls the private key out and hands it to Netty, which builds a *fresh* keystore and
+         * calls `setKeyEntry` on it. That fails twice over on Android: Netty passes a null
+         * password, which Android's BouncyCastle keystore rejects with an NPE, and an
+         * AndroidKeyStore private key is non-exportable by design, so it could never be re-packed
+         * even if the password were right.
+         *
+         * A `KeyManagerFactory` is the supported way to use such a key: it keeps the opaque
+         * handle and asks the keystore to sign, so the key never leaves. The resulting context is
+         * attached to Netty's pipeline directly (see OpenLinkServer), bypassing `sslConnector`.
+         *
+         * The null password in `init` is correct and not an oversight -- an AndroidKeyStore entry
+         * is protected by the keystore's own access control, not a passphrase.
          */
-        fun emptyPassword(): CharArray = CharArray(0)
+        fun serverSslContext(keyStore: KeyStore): SSLContext {
+            val keyManagerFactory = KeyManagerFactory
+                .getInstance(KeyManagerFactory.getDefaultAlgorithm())
+                .apply { init(keyStore, null) }
+
+            return SSLContext.getInstance("TLS").apply {
+                init(keyManagerFactory.keyManagers, null, null)
+            }
+        }
 
         @Volatile
         private var cached: TlsIdentity? = null

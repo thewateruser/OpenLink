@@ -8,8 +8,11 @@ import com.openlink.child.prefs.SecurePrefs
 import com.openlink.child.security.TlsIdentity
 import io.ktor.server.netty.Netty
 import io.ktor.server.engine.EmbeddedServer
+import io.ktor.server.engine.connector
 import io.ktor.server.engine.embeddedServer
-import io.ktor.server.engine.sslConnector
+import io.netty.handler.ssl.SslHandler
+import javax.net.ssl.SSLContext
+import javax.net.ssl.SSLEngine
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.ServerSocket
@@ -25,15 +28,22 @@ import java.net.ServerSocket
  * (Tailscale/WireGuard) at once, which is what lets docs/PROTOCOL.md have a single code path for
  * "at home" and "away".
  *
- * ENGINE NOTE: Netty, and **not** CIO. This is not a preference -- CIO cannot terminate TLS at
- * all. It throws `UnsupportedOperationException: CIO Engine does not currently support HTTPS`
- * the moment an `sslConnector` tries to start, and since every route here is HTTPS-only that
- * leaves the app with no listener whatsoever.
+ * TLS NOTE -- two findings, both from running this on an emulator rather than compiling it:
  *
- * This was originally written against CIO on the stated belief that Ktor 3.2 had added
- * server-side TLS to it. That belief was wrong, and nothing caught it until an emulator actually
- * ran the app: it compiled perfectly and failed at runtime, every time. If you are tempted to
- * move back to CIO because it is lighter, run the instrumented tests first.
+ *  1. **Netty, not CIO.** CIO cannot terminate TLS at all; it throws
+ *     `UnsupportedOperationException: CIO Engine does not currently support HTTPS` as soon as an
+ *     SSL connector starts. Every route here is HTTPS-only, so on CIO the app has no listener.
+ *     This was originally written against CIO on the stated belief that Ktor 3.2 had added
+ *     server-side TLS to it, which was simply untrue.
+ *  2. **A plain connector plus our own SslHandler, not `sslConnector`.** Handed a keystore,
+ *     Ktor extracts the private key and Netty re-packs it into a fresh keystore. On Android that
+ *     fails twice: Netty passes a null password, which the platform BouncyCastle keystore
+ *     rejects with an NPE, and an AndroidKeyStore key is non-exportable anyway. Attaching an
+ *     `SslHandler` through `channelPipelineConfig` keeps the key where it belongs -- see
+ *     `TlsIdentity.serverSslContext`.
+ *
+ * Both compiled perfectly and failed on every single run. Before changing any of this, run the
+ * instrumented tests in `src/androidTest/`.
  */
 class OpenLinkServer(context: Context) {
 
@@ -62,7 +72,16 @@ class OpenLinkServer(context: Context) {
             TlsIdentity.loadOrCreate()
         } catch (e: Exception) {
             val message = "Could not load the device TLS identity (${e.javaClass.simpleName})"
-            Log.e(TAG, message)
+            Log.e(TAG, message, e)
+            ServerState.onFailed(message)
+            return null
+        }
+
+        val sslContext = try {
+            TlsIdentity.serverSslContext(identity.keyStore)
+        } catch (e: Exception) {
+            val message = "Could not build the TLS context (${e.javaClass.simpleName})"
+            Log.e(TAG, message, e)
             ServerState.onFailed(message)
             return null
         }
@@ -87,16 +106,15 @@ class OpenLinkServer(context: Context) {
                 embeddedServer(
                     factory = Netty,
                     configure = {
-                        sslConnector(
-                            keyStore = identity.keyStore,
-                            keyAlias = TlsIdentity.KEY_ALIAS,
-                            // An AndroidKeyStore entry has no passphrase: access is mediated by
-                            // the keystore itself, and the private key never leaves it.
-                            keyStorePassword = { TlsIdentity.emptyPassword() },
-                            privateKeyPassword = { TlsIdentity.emptyPassword() }
-                        ) {
+                        // A PLAIN connector, with TLS added to the pipeline below. Using
+                        // Ktor's sslConnector instead makes Netty re-pack the private key into
+                        // a new keystore, which cannot work here -- see TlsIdentity.
+                        connector {
                             host = LISTEN_HOST
                             port = candidate
+                        }
+                        channelPipelineConfig = {
+                            addFirst(TLS_HANDLER, SslHandler(newServerEngine(sslContext)))
                         }
                     },
                     module = { openLinkModule(deps) }
@@ -169,8 +187,22 @@ class OpenLinkServer(context: Context) {
         false
     }
 
+    /**
+     * A fresh server-mode [SSLEngine] per connection. Netty requires one engine per channel --
+     * an engine carries the state of a single handshake and cannot be shared.
+     */
+    private fun newServerEngine(context: SSLContext): SSLEngine =
+        context.createSSLEngine().apply {
+            useClientMode = false
+            // The parent authenticates the *device* by pinned certificate; it presents no
+            // certificate of its own, and is authenticated by its bearer token instead.
+            wantClientAuth = false
+            needClientAuth = false
+        }
+
     companion object {
         private const val TAG = "OpenLinkServer"
+        private const val TLS_HANDLER = "openlink-tls"
 
         const val DEFAULT_PORT = 8765
         private const val PORT_ATTEMPTS = 10

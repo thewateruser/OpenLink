@@ -34,12 +34,19 @@ artifact, which is the easiest way to get a build without a local Android SDK.
 - **Netty, not CIO.** Ktor's CIO engine **cannot terminate TLS at all**. Starting an
   `sslConnector` on it throws `UnsupportedOperationException: CIO Engine does not currently
   support HTTPS`. Every route here is HTTPS-only, so on CIO the app has no listener and pairing
-  is impossible.
+  is impossible. Netty is heavier on Android, and that is the correct price.
+- **TLS is attached to Netty's pipeline by hand, not via `sslConnector`.** Given a keystore,
+  Ktor pulls the private key out and Netty re-packs it into a fresh keystore. That breaks twice
+  on Android: Netty supplies a null password, which the platform BouncyCastle keystore rejects
+  with an NPE, and an AndroidKeyStore key is non-exportable by design, so it could never be
+  re-packed even with the right password. Instead `TlsIdentity.serverSslContext` builds an
+  `SSLContext` from a `KeyManagerFactory` -- which holds the keystore's opaque handle and asks
+  it to sign, so the key never leaves -- and `OpenLinkServer` attaches an `SslHandler` through
+  `channelPipelineConfig` on a plain connector.
 
-  This app originally used CIO, on the confident but entirely wrong belief that Ktor 3.2 had
-  added server-side TLS to it. It compiled fine and failed on every single run. Nothing caught
-  it until an emulator actually launched the app, which is why the instrumented tests in
-  `src/androidTest/` now exist. Netty is heavier on Android, and that is the correct price.
+  Both of the above compiled perfectly and failed on every single run. Neither was caught until
+  an emulator actually launched the app, which is why the instrumented tests in
+  `src/androidTest/` exist and why CI now boots an emulator on two API levels.
 - **Kotlin 2.x** — Ktor 3 artifacts carry Kotlin 2.0 metadata, which the 1.9 compiler this project
   started on refuses to read. Moving to Kotlin 2.1 also means the Compose compiler is applied as
   its own Gradle plugin (`org.jetbrains.kotlin.plugin.compose`) rather than via `composeOptions`.

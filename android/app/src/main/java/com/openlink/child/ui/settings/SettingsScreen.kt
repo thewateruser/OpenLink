@@ -58,6 +58,7 @@ import kotlinx.coroutines.withContext
 fun SettingsScreen(
     onBack: () -> Unit,
     onRepair: () -> Unit,
+    onOpenAwayFromHome: () -> Unit,
     onUnpairedAll: () -> Unit
 ) {
     val context = LocalContext.current
@@ -168,6 +169,16 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.bodySmall
                 )
             }
+
+            Spacer(Modifier.height(16.dp))
+            OutlinedButton(onClick = onOpenAwayFromHome, modifier = Modifier.fillMaxWidth()) {
+                Text("Away from home")
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "How the parent can check in on this phone when you're not on the same Wi-Fi.",
+                style = MaterialTheme.typography.bodySmall
+            )
 
             fingerprint?.let { hex ->
                 Spacer(Modifier.height(16.dp))

@@ -24,10 +24,12 @@ struct EndpointsView: View {
     var body: some View {
         Form {
             Section {
-                Text("OpenLink tries these in order of expected speed — addresses on your Wi-Fi first, then overlay-network addresses — and uses whichever answers first.")
+                Text("OpenLink tries these in order of expected speed — addresses on your Wi-Fi first, then Tailscale addresses — and uses whichever answers first. It learns them from the device by itself; you shouldn't normally need this screen.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
+
+            AwayFromHomeSections()
 
             Section("Known Addresses") {
                 if session.device.endpoints.isEmpty {
@@ -46,6 +48,9 @@ struct EndpointsView: View {
                     .autocorrectionDisabled()
                     .keyboardType(.URL)
                 Text("Port \(openLinkDefaultPort) is assumed if you don't give one.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("Typing an address in by hand is only for unusual setups. With Tailscale signed in on both phones, the address arrives on its own.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Button("Add") { add() }

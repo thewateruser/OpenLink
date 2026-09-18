@@ -53,6 +53,16 @@ struct SettingsView: View {
                 }
             }
 
+            Section("Away From Home") {
+                NavigationLink(destination: AwayFromHomeView()) {
+                    Label("How to check in when you're out", systemImage: "globe")
+                        .font(.footnote)
+                }
+                Text("Away from your Wi-Fi, both phones need Tailscale installed and signed in to the same account. After that there's nothing to configure here.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Notifications") {
                 Label(
                     notifications.isAuthorized ? "Local notifications allowed" : "Local notifications off",
@@ -69,7 +79,7 @@ struct SettingsView: View {
             Section("How This Works") {
                 infoRow(
                     "No account, no server",
-                    "Each child device is its own server. This app talks to it directly over your Wi-Fi, or over an overlay network (Tailscale/WireGuard) when you're away."
+                    "Each child device is its own server. This app talks to it directly over your Wi-Fi at home, and over Tailscale (or your own WireGuard) when you're away — see Away From Home above."
                 )
                 infoRow(
                     "Certificate pinning",

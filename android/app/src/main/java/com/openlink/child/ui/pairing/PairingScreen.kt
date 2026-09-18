@@ -140,8 +140,9 @@ fun PairingScreen(onPaired: () -> Unit, onSkip: (() -> Unit)? = null) {
         Text("Pair with a parent", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(8.dp))
         Text(
-            "Open OpenLink on the parent's phone and scan this code. Both phones need to be on " +
-                "the same Wi-Fi right now.",
+            "Open OpenLink on the parent's phone and scan this code. This goes most smoothly " +
+                "with both phones on the same Wi-Fi. Once you're paired, Settings \u203a Away " +
+                "from home explains how the parent can check in when you're not at home.",
             style = MaterialTheme.typography.bodyMedium
         )
         Spacer(Modifier.height(24.dp))

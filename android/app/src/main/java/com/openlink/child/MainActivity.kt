@@ -10,6 +10,7 @@ import com.openlink.child.pairing.ParentRegistry
 import com.openlink.child.ui.home.HomeScreen
 import com.openlink.child.ui.pairing.PairingScreen
 import com.openlink.child.ui.permissions.PermissionsScreen
+import com.openlink.child.ui.settings.AwayFromHomeScreen
 import com.openlink.child.ui.settings.SettingsScreen
 import com.openlink.child.ui.theme.OpenLinkTheme
 
@@ -70,10 +71,14 @@ class MainActivity : ComponentActivity() {
                             onOpenSettings = { navController.navigate("settings") }
                         )
                     }
+                    composable("away") {
+                        AwayFromHomeScreen(onBack = { navController.popBackStack() })
+                    }
                     composable("settings") {
                         SettingsScreen(
                             onBack = { navController.popBackStack() },
                             onRepair = { navController.navigate("pairing") },
+                            onOpenAwayFromHome = { navController.navigate("away") },
                             onUnpairedAll = {
                                 navController.navigate("permissions") {
                                     popUpTo(0) { inclusive = true }

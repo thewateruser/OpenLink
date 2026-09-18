@@ -117,18 +117,10 @@ jobs:
           profile: pixel_6
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          # Dump the app's logcat on failure. Without it a runtime fault reaches
-          # us as only an assertion message, and the stack trace that says what
-          # actually broke dies with the emulator.
-          script: |
-            cd android
-            ./gradlew connectedDebugAndroidTest --stacktrace || {
-              echo "=== logcat (OpenLink) ==="
-              adb logcat -d -v brief \
-                OpenLinkServer:V MonitorService:V TlsIdentity:V AndroidRuntime:E System.err:W '*:S' \
-                | tail -200
-              exit 1
-            }
+          # Must stay a single line: this action pipes `script:` to `sh -c` one
+          # line at a time, so any multi-line construct is split across shells
+          # and fails to parse. The script file does the work and the logcat dump.
+          script: bash ./.github/scripts/run-instrumented-tests.sh
 
       - name: Upload test reports
         if: always()
